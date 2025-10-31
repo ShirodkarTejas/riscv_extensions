@@ -27,6 +27,9 @@ def parse_values(mlir_text: str):
     def find_int(name, default):
         mm = re.search(rf'{name}\\s*=\\s*([0-9]+)\\s*:\\s*i64', scope)
         return int(mm.group(1)) if mm else default
+    def find_float(name, default):
+        mm = re.search(rf'{name}\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)\\s*:\\s*f(16|32|64)', scope)
+        return float(mm.group(1)) if mm else default
     S = find_int('tile_S', 16)
     BS = find_int('block_size', 4)
     return {
@@ -36,6 +39,10 @@ def parse_values(mlir_text: str):
         's_tokens': S,
         'k_blocks': math.ceil(S / (BS if BS else 1)),
         'global_tokens': find_int('global_tokens', 0),
+        'nm_n': find_int('nm_n', 0),
+        'nm_m': find_int('nm_m', 0),
+        'lsh_buckets': find_int('lsh_buckets', 0),
+        'keep_ratio': find_float('keep_ratio', 0.0),
     }
 
 
@@ -47,7 +54,7 @@ def main():
     txt = open(args.in_mlir).read()
     vals = parse_values(txt)
     with open(args.out_desc, 'w') as f:
-        for k in ['m_rows', 'head_dim_d', 'block_size', 'k_blocks', 's_tokens', 'global_tokens']:
+        for k in ['m_rows', 'head_dim_d', 'block_size', 'k_blocks', 's_tokens', 'global_tokens', 'nm_n', 'nm_m', 'lsh_buckets', 'keep_ratio']:
             f.write(f"{k}={vals.get(k, 0)}\n")
 
 

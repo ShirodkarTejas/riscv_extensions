@@ -1,6 +1,10 @@
 m_rows=4
 head_dim_d=16
-block_size=16
+block_size=4
 k_blocks=4
 s_tokens=16
-global_tokens=8
+global_tokens=0
+nm_n=0
+nm_m=0
+lsh_buckets=0
+keep_ratio=0.0

@@ -45,7 +45,8 @@ int main(int argc, char** argv) {
   }
 
   // Program descriptor (defaults; can be overridden by desc file)
-  uint32_t M = 4, D = 16, BS = 4, KB = 4, S = 16, GT = 0;
+  uint32_t M = 4, D = 16, BS = 4, KB = 4, S = 16, GT = 0, NMN = 0, NMM = 0, LSHB = 0;
+  float KEEP = 0.0f;
   // Optionally read a descriptor file passed as argv[2]: key=value per line
   if (argc > 2) {
     FILE* df = fopen(argv[2], "r");
@@ -60,9 +61,24 @@ int main(int argc, char** argv) {
           else if (!strcmp(key, "k_blocks")) KB = (uint32_t)val;
           else if (!strcmp(key, "s_tokens")) S = (uint32_t)val;
           else if (!strcmp(key, "global_tokens")) GT = (uint32_t)val;
+          else if (!strcmp(key, "nm_n")) NMN = (uint32_t)val;
+          else if (!strcmp(key, "nm_m")) NMM = (uint32_t)val;
+          else if (!strcmp(key, "lsh_buckets")) LSHB = (uint32_t)val;
         }
       }
       fclose(df);
+      // parse keep_ratio if present (float)
+      df = fopen(argv[2], "r");
+      if (df) {
+        char buf2[128];
+        while (fgets(buf2, sizeof(buf2), df)) {
+          char key2[64]; float fval;
+          if (sscanf(buf2, "%63[^=]=%f", key2, &fval) == 2) {
+            if (!strcmp(key2, "keep_ratio")) KEEP = fval;
+          }
+        }
+        fclose(df);
+      }
     }
   }
   mmio_write(0x0030, M);
@@ -165,7 +181,7 @@ int main(int argc, char** argv) {
          (unsigned long long)gcy, (unsigned long long)mcy, (unsigned long long)dma);
   printf("rocc_counters(proxy): gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
          (unsigned long long)proxy_gcy, (unsigned long long)proxy_mcy, (unsigned long long)proxy_dma);
-  printf("spec_info: global_tokens=%u\n", GT);
+  printf("spec_info: global_tokens=%u nm=(%u,%u) lsh_buckets=%u keep_ratio=%.3f\n", GT, NMN, NMM, LSHB, KEEP);
   delete top;
   return 0;
 }
