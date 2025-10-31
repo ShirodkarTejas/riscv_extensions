@@ -13,13 +13,14 @@ static int args(int argc, char** argv, const char* k, const char** out) {
 
 int main(int argc, char** argv) {
   const char* spec = "sliding_window";
-  long B=1,H=1,L=128,D=32, window=8, block_size=64, global_tokens=0, nm_n=0, nm_m=0, lsh_buckets=0;
+  long B=1,H=1,L=128,D=32, window=8, block_size=64, global_tokens=0, nm_n=0, nm_m=0, lsh_buckets=0, tile_rows=0;
   long keep_ratio_x1000 = 120; // 0.12
   (void)args(argc, argv, "--spec", &spec);
   argi(argc, argv, "--B", &B); argi(argc, argv, "--H", &H); argi(argc, argv, "--L", &L); argi(argc, argv, "--D", &D);
   argi(argc, argv, "--window", &window); argi(argc, argv, "--block_size", &block_size);
   argi(argc, argv, "--global_tokens", &global_tokens); argi(argc, argv, "--nm_n", &nm_n); argi(argc, argv, "--nm_m", &nm_m);
   argi(argc, argv, "--lsh_buckets", &lsh_buckets); argi(argc, argv, "--keep_x1000", &keep_ratio_x1000);
+  argi(argc, argv, "--tile_rows", &tile_rows);
   sattn_shape_t s = { .B = B, .H = H, .L = L, .D = D };
   size_t elems = (size_t)B * H * L * D;
   float *Q=(float*)malloc(elems*sizeof(float)), *K=(float*)malloc(elems*sizeof(float)), *V=(float*)malloc(elems*sizeof(float));
@@ -28,7 +29,11 @@ int main(int argc, char** argv) {
   for (size_t i = 0; i < elems; ++i) { Q[i] = sinf((float)i*0.01f); K[i] = cosf((float)i*0.02f); V[i] = sinf((float)i*0.03f); }
   if (strcmp(spec, "sliding_window")==0) {
     sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size };
-    sattn_rvv_sliding_global(Q,K,V,O,s,p);
+    if (tile_rows > 1) {
+      sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,(int)tile_rows);
+    } else {
+      sattn_rvv_sliding_global(Q,K,V,O,s,p);
+    }
   } else if (strcmp(spec, "block_local_global")==0 || strcmp(spec, "bsr")==0) {
     sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens };
     sattn_rvv_block_topk(Q,K,V,O,s,p);
@@ -41,12 +46,23 @@ int main(int argc, char** argv) {
   } else if (strcmp(spec, "lsh")==0) {
     sattn_lsh_params_t p = { .buckets = (int)lsh_buckets };
     sattn_rvv_lsh(Q,K,V,O,s,p);
+  } else if (strcmp(spec, "sliding_window_tiled")==0) {
+    sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size };
+    sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,4);
+  } else if (strcmp(spec, "block_local_global_tiled")==0) {
+    sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens };
+    sattn_rvv_block_topk_tiled(Q,K,V,O,s,p,4);
   } else {
     fprintf(stderr, "unknown spec %s\n", spec);
     return 3;
   }
   double acc=0.0; for (size_t i=0;i<elems;++i) acc += O[i];
-  printf("spec=%s checksum=%.6f\n", spec, acc);
+  sattn_rvv_counters_t ctrs; sattn_rvv_counters_get(&ctrs);
+  printf("spec=%s checksum=%.6f rvv_bytes_read=%llu bytes_written=%llu mac_flops=%llu\n",
+         spec, acc,
+         (unsigned long long)ctrs.bytes_read,
+         (unsigned long long)ctrs.bytes_written,
+         (unsigned long long)ctrs.mac_flops);
   free(Q); free(K); free(V); free(O);
   return 0;
 }

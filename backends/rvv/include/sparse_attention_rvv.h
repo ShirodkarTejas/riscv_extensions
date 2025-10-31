@@ -27,6 +27,16 @@ void sattn_rvv_sliding_global(
     sattn_shape_t shape,
     sattn_params_t params);
 
+// Tiled variant of sliding_window to improve locality for multiple query rows
+void sattn_rvv_sliding_global_tiled(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params,
+    int tile_rows);
+
 // Read cycle counter if available (RISC-V rdcycle), else returns 0.
 uint64_t sattn_rdcycle();
 
@@ -54,6 +64,16 @@ void sattn_rvv_block_topk(
     float* O,
     sattn_shape_t shape,
     sattn_blocktopk_params_t params);
+
+// Tiled variant of block_topk (BLG) to improve locality across multiple rows
+void sattn_rvv_block_topk_tiled(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params,
+    int tile_rows);
 
 // N:M structured sparsity – simple wrapper mapping to block_topk with block_size=M, keep_ratio=N/M
 typedef struct {

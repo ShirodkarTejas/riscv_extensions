@@ -169,6 +169,8 @@ int main(int argc, char** argv) {
   uint64_t gcy = mmio_read(0x0090);
   uint64_t mcy = mmio_read(0x0098);
   uint64_t dma = mmio_read(0x00A0);
+  uint64_t dmaq = mmio_read(0x00A8);
+  uint64_t dmak = mmio_read(0x00B0);
   uint64_t proxy_gcy = (uint64_t)S * (uint64_t)D;
   uint64_t proxy_mcy = (uint64_t)M * (uint64_t)S * (uint64_t)D;
   uint64_t proxy_dma = ((uint64_t)S * (uint64_t)D) * 8ull; // Q+K 4B each per element
@@ -177,8 +179,9 @@ int main(int argc, char** argv) {
     proxy_gcy += (uint64_t)GT * (uint64_t)D;
     proxy_dma += (uint64_t)GT * (uint64_t)D * 8ull;
   }
-  printf("rocc_counters(rtl):   gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
-         (unsigned long long)gcy, (unsigned long long)mcy, (unsigned long long)dma);
+  printf("rocc_counters(rtl):   gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu dma_q=%llu dma_k=%llu\n",
+         (unsigned long long)gcy, (unsigned long long)mcy, (unsigned long long)dma,
+         (unsigned long long)dmaq, (unsigned long long)dmak);
   printf("rocc_counters(proxy): gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
          (unsigned long long)proxy_gcy, (unsigned long long)proxy_mcy, (unsigned long long)proxy_dma);
   printf("spec_info: global_tokens=%u nm=(%u,%u) lsh_buckets=%u keep_ratio=%.3f\n", GT, NMN, NMM, LSHB, KEEP);

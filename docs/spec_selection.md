@@ -38,6 +38,16 @@ build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect -pa
 build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect -pass-pipeline=builtin.module(sattn-lower-rvv)
 ```
 
+- Run RVV kernels directly from MLIR (end-to-end):
+```
+/opt/venv/bin/python compiler/mlir/tools/sattn_run_rvv_from_mlir.py --mlir input.mlir
+# Example MLIR (sliding_window):
+# module {
+#   "sattn.sparse_attention"() { window_size = 8 : i64, tile_D = 32 : i64, tile_S = 128 : i64 } : () -> ()
+# }
+# Output: spec=sliding_window checksum=...
+```
+
 - End-to-end compile+sim wrapper:
 ```
 /opt/venv/bin/python compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir

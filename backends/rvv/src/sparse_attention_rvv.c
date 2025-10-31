@@ -269,6 +269,72 @@ void sattn_rvv_sliding_global(
   }
 }
 
+void sattn_rvv_sliding_global_tiled(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params,
+    int tile_rows) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int window = params.window_size;
+  const float scale = 1.0f / sqrtf((float)D);
+  if (tile_rows <= 0) tile_rows = 4;
+  for (int64_t b = 0; b < B; ++b) {
+    for (int64_t h = 0; h < H; ++h) {
+      for (int64_t ib = 0; ib < L; ib += tile_rows) {
+        int64_t iend = ib + tile_rows; if (iend > L) iend = L;
+        // zero O tile
+        for (int64_t i = ib; i < iend; ++i) for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+        // For each row in tile, compute local window
+        for (int64_t i = ib; i < iend; ++i) {
+          int64_t jl = i - window > 0 ? i - window : 0;
+          int64_t jr = i + window + 1 < L ? i + window + 1 : L;
+          if (jr <= jl) continue;
+          float m = -INFINITY;
+          for (int64_t j = jl; j < jr; ++j) {
+            float dot = 0.f;
+#ifdef __riscv_vector
+            dot = dot_f32_rvv(&Q[offset_bhld(b,h,i,0,B,H,L,D)], &K[offset_bhld(b,h,j,0,B,H,L,D)], D);
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
+#else
+            for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
+#endif
+            dot *= scale; if (dot > m) m = dot;
+          }
+          float denom = 0.f;
+          for (int64_t j = jl; j < jr; ++j) {
+            float dot = 0.f;
+#ifdef __riscv_vector
+            dot = dot_f32_rvv(&Q[offset_bhld(b,h,i,0,B,H,L,D)], &K[offset_bhld(b,h,j,0,B,H,L,D)], D);
+#else
+            for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+#endif
+            float w = expf(dot * scale - m); denom += w;
+#ifdef __riscv_vector
+            axpy_f32_rvv(w, &V[offset_bhld(b,h,j,0,B,H,L,D)], &O[offset_bhld(b,h,i,0,B,H,L,D)], D);
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+#else
+            for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+#endif
+          }
+          float inv = 1.f / (denom + 1e-12f);
+#ifdef __riscv_vector
+          size_t idx = 0; for (; idx < (size_t)D;) { size_t vl = vsetvl_e32m1((size_t)(D - idx)); vfloat32m1_t vy = vle32_v_f32m1(&O[offset_bhld(b,h,i,0,B,H,L,D)] + idx, vl); vy = vfmul_vf_f32m1(vy, inv, vl); vse32_v_f32m1(&O[offset_bhld(b,h,i,0,B,H,L,D)] + idx, vy, vl); idx += vl; }
+          _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+#else
+          for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+          _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+#endif
+        }
+      }
+    }
+  }
+}
+
 void sattn_rvv_block_topk(
     const float* Q,
     const float* K,
@@ -391,6 +457,83 @@ void sattn_rvv_block_topk(
 
   free(block_idx);
   free(block_scores);
+}
+
+void sattn_rvv_block_topk_tiled(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params,
+    int tile_rows) {
+  if (tile_rows <= 0) tile_rows = 4;
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int block = params.block_size > 0 ? params.block_size : 64;
+  const int64_t num_blocks = (L + block - 1) / block;
+  int k_blocks = (int)((float)num_blocks * (params.keep_ratio > 0.f ? params.keep_ratio : 0.12f) + 0.999f);
+  if (k_blocks < 1) k_blocks = 1;
+  const float scale = 1.0f / sqrtf((float)D);
+
+  int* block_idx = (int*)malloc((size_t)num_blocks * sizeof(int));
+  float* block_scores = (float*)malloc((size_t)num_blocks * sizeof(float));
+  if (!block_idx || !block_scores) { if (block_idx) free(block_idx); if (block_scores) free(block_scores); return; }
+
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t ib = 0; ib < L; ib += tile_rows) {
+      int64_t iend = ib + tile_rows; if (iend > L) iend = L;
+      for (int64_t i = ib; i < iend; ++i) for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      for (int64_t i = ib; i < iend; ++i) {
+        for (int64_t nb = 0; nb < num_blocks; ++nb) {
+          int64_t s = nb * block; int64_t e = s + block; if (e > L) e = L;
+          float dot = 0.f; int64_t cnt = (int64_t)(e - s);
+#ifdef __riscv_vector
+          dot = reduce_block_sumdot_f32_rvv(&Q[offset_bhld(b,h,i,0,B,H,L,D)], &K[offset_bhld(b,h,s,0,B,H,L,D)], cnt, D);
+          _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * sizeof(float) + (uint64_t)D * sizeof(float);
+          _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
+#else
+          for (int64_t j = s; j < e; ++j) for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+#endif
+          block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
+        }
+        for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
+          if (block_scores[y] > block_scores[x]) { float ts = block_scores[x]; block_scores[x] = block_scores[y]; block_scores[y] = ts; int ti = block_idx[x]; block_idx[x] = block_idx[y]; block_idx[y] = ti; }
+        float denom = 0.f; int gtok = params.global_tokens > 0 ? (params.global_tokens < (int)L ? params.global_tokens : (int)L) : 0;
+        int sel_cap = (int)(k_blocks * block + gtok); int sel_cnt = 0;
+        int* sel_idx = (int*)malloc((size_t)sel_cap * sizeof(int));
+        for (int j = 0; j < gtok && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = j;
+        for (int kb = 0; kb < k_blocks && kb < num_blocks; ++kb) { int nb = block_idx[kb]; int64_t s = (int64_t)nb * block; int64_t e = s + block; if (e > L) e = L; for (int64_t j = s; j < e && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = (int)j; }
+#ifdef __riscv_vector
+        float* K_sel = (float*)malloc((size_t)sel_cnt * (size_t)D * sizeof(float));
+        float* V_sel = (float*)malloc((size_t)sel_cnt * (size_t)D * sizeof(float));
+        if (K_sel && V_sel) {
+          gather_rows_indexed_f32(&K[offset_bhld(b,h,0,0,B,H,L,D)], sel_idx, sel_cnt, D, K_sel);
+          gather_rows_indexed_f32(&V[offset_bhld(b,h,0,0,B,H,L,D)], sel_idx, sel_cnt, D, V_sel);
+          _rvv_ctrs.br += (uint64_t)sel_cnt * (uint64_t)D * sizeof(float) * 2;
+          for (int t = 0; t < sel_cnt; ++t) {
+            float dot = dot_f32_rvv(&Q[offset_bhld(b,h,i,0,B,H,L,D)], &K_sel[(int64_t)t * D], D);
+            float w = expf(dot * scale); denom += w;
+            axpy_f32_rvv(w, &V_sel[(int64_t)t * D], &O[offset_bhld(b,h,i,0,B,H,L,D)], D);
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float); _rvv_ctrs.mac += (uint64_t)D;
+          }
+        } else {
+          for (int t = 0; t < sel_cnt; ++t) { int j = sel_idx[t]; float dot = dot_f32_rvv(&Q[offset_bhld(b,h,i,0,B,H,L,D)], &K[offset_bhld(b,h,j,0,B,H,L,D)], D); float w = expf(dot * scale); denom += w; axpy_f32_rvv(w, &V[offset_bhld(b,h,j,0,B,H,L,D)], &O[offset_bhld(b,h,i,0,B,H,L,D)], D); }
+        }
+        if (K_sel) free(K_sel); if (V_sel) free(V_sel);
+#else
+        for (int t = 0; t < sel_cnt; ++t) { int j = sel_idx[t]; float dot = 0.f; for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)]; float w = expf(dot * scale); denom += w; for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)]; }
+#endif
+        free(sel_idx);
+        float inv = 1.f / (denom + 1e-12f);
+#ifdef __riscv_vector
+        size_t idx = 0; for (; idx < (size_t)D;) { size_t vl = vsetvl_e32m1((size_t)(D - idx)); vfloat32m1_t vy = vle32_v_f32m1(&O[offset_bhld(b,h,i,0,B,H,L,D)] + idx, vl); vy = vfmul_vf_f32m1(vy, inv, vl); vse32_v_f32m1(&O[offset_bhld(b,h,i,0,B,H,L,D)] + idx, vy, vl); idx += vl; }
+#else
+        for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+#endif
+      }
+    }
+  }
+  free(block_idx); free(block_scores);
 }
 
 

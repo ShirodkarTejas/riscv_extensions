@@ -40,6 +40,8 @@ module rocc_sattn #(
   localparam REG_G_CYCLES  = 16'h0090; // gather cycles
   localparam REG_M_CYCLES  = 16'h0098; // mac cycles (spdot run)
   localparam REG_DMA_BYTES = 16'h00A0; // dma-like bytes (q/k writes)
+  localparam REG_DMA_QBYTES= 16'h00A8; // dma bytes into Q spad
+  localparam REG_DMA_KBYTES= 16'h00B0; // dma bytes into K spad
   localparam REG_IDX_WADDR = 16'h0070; // write index RAM address
   localparam REG_IDX_WDATA = 16'h0078; // write index RAM data (commit)
 
@@ -63,6 +65,7 @@ module rocc_sattn #(
   assign start_pulse = 1'b0;
   logic [63:0] acc_sum;
   logic [63:0] gather_cycles, mac_cycles, dma_bytes;
+  logic [63:0] dma_q_bytes, dma_k_bytes;
 
   // Simple ready/done FSM
   typedef enum logic [1:0] {IDLE, GATHER, RUN, DONE} state_e;
@@ -157,6 +160,7 @@ module rocc_sattn #(
       idx_base <= '0; strd_base <= '0;
       m_rows <= '0; head_dim_d <= '0; block_size <= '0; k_blocks <= '0; s_tokens <= '0;
       scale_fp_bits <= '0; cmd_reg <= '0; idx_wen <= 1'b0; idx_waddr <= '0; idx_wdata <= '0;
+      dma_q_bytes <= 64'd0; dma_k_bytes <= 64'd0;
     end else if (mmio_wen) begin
       unique case (mmio_addr)
         REG_Q_BASE:    q_base <= mmio_wdata;
@@ -204,6 +208,8 @@ module rocc_sattn #(
       REG_G_CYCLES:  mmio_rdata = gather_cycles;
       REG_M_CYCLES:  mmio_rdata = mac_cycles;
       REG_DMA_BYTES: mmio_rdata = dma_bytes;
+      REG_DMA_QBYTES:mmio_rdata = dma_q_bytes;
+      REG_DMA_KBYTES:mmio_rdata = dma_k_bytes;
       default:       mmio_rdata = '0;
     endcase
   end
@@ -243,23 +249,15 @@ module rocc_sattn #(
       if (state == RUN && is_spdot) begin
         mac_cycles <= mac_cycles + 64'd1;
       end
-      // DMA bytes count writes into Q/K scratchpads
-      if (q_wen) dma_bytes <= dma_bytes + 64'd4;
-      if (k_wen) dma_bytes <= dma_bytes + 64'd4;
-      // Legacy approximate bumps on phase transitions (kept for stability)
-      if (state == GATHER && state_n == RUN) begin
-        logic [63:0] add_cyc;
-        add_cyc = {{48{1'b0}}, s_tokens[15:0]} * {{48{1'b0}}, head_dim_d[15:0]};
-        gather_cycles <= gather_cycles + add_cyc;
-        // two 32-bit writes per element (Q and K)
-        dma_bytes <= dma_bytes + (add_cyc << 3); // *8 bytes per element
+      // DMA bytes count writes into Q/K scratchpads (handle simultaneous writes)
+      begin
+        logic [63:0] dma_inc;
+        dma_inc = 64'd0;
+        if (q_wen) begin dma_inc = dma_inc + 64'd4; dma_q_bytes <= dma_q_bytes + 64'd4; end
+        if (k_wen) begin dma_inc = dma_inc + 64'd4; dma_k_bytes <= dma_k_bytes + 64'd4; end
+        if (dma_inc != 64'd0) dma_bytes <= dma_bytes + dma_inc;
       end
-      if (state == RUN && state_n == DONE && is_spdot) begin
-        logic [63:0] mul1, mul2;
-        mul1 = {{48{1'b0}}, m_rows[15:0]} * {{48{1'b0}}, s_tokens[15:0]};
-        mul2 = mul1 * {{48{1'b0}}, head_dim_d[15:0]};
-        mac_cycles <= mac_cycles + mul2;
-      end
+      // Remove legacy transition-based bumps; counters now reflect per-cycle and per-write events only
     end
   end
 
