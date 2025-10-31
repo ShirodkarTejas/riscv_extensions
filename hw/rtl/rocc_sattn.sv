@@ -201,9 +201,9 @@ module rocc_sattn #(
       REG_ACC_SUM:   mmio_rdata = acc_sum;
       REG_SOF_SUM:   mmio_rdata = sof_sum;
       REG_SPM_SUM:   mmio_rdata = spm_sum;
-      REG_G_CYCLES:  mmio_rdata = {{48{1'b0}}, s_tokens[15:0]} * {{48{1'b0}}, head_dim_d[15:0]};
-      REG_M_CYCLES:  mmio_rdata = ({{48{1'b0}}, m_rows[15:0]} * {{48{1'b0}}, s_tokens[15:0]}) * {{48{1'b0}}, head_dim_d[15:0]};
-      REG_DMA_BYTES: mmio_rdata = ( ({{48{1'b0}}, s_tokens[15:0]} * {{48{1'b0}}, head_dim_d[15:0]}) << 3 );
+      REG_G_CYCLES:  mmio_rdata = gather_cycles;
+      REG_M_CYCLES:  mmio_rdata = mac_cycles;
+      REG_DMA_BYTES: mmio_rdata = dma_bytes;
       default:       mmio_rdata = '0;
     endcase
   end
