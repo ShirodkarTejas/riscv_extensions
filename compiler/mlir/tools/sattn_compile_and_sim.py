@@ -44,7 +44,7 @@ def main():
             m = re.search(rf"{name}\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)", txt2)
             return float(m.group(1)) if m else None
         updates = {}
-        for key in ['nm_n','nm_m','lsh_buckets']:
+        for key in ['nm_n','nm_m','lsh_buckets','gqa_group_size','comp_block_size']:
             v = find_int(key)
             if v is not None: updates[key] = str(v)
         kr = find_float('keep_ratio')
@@ -58,7 +58,7 @@ def main():
                         vals[k] = v
             vals.update(updates)
             with open(desc_txt, 'w') as f:
-                for k in ['m_rows','head_dim_d','block_size','k_blocks','s_tokens','global_tokens','nm_n','nm_m','lsh_buckets','keep_ratio']:
+                for k in ['m_rows','head_dim_d','block_size','k_blocks','s_tokens','global_tokens','nm_n','nm_m','lsh_buckets','keep_ratio','gqa_group_size','comp_block_size']:
                     f.write(f"{k}={vals.get(k, '0')}\n")
     except Exception as _:
         pass

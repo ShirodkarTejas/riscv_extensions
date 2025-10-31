@@ -120,6 +120,8 @@ typedef struct sattn_blocktopk_params_t {
   int block_size;   // tokens per block
   float keep_ratio; // fraction of blocks kept per row
   int global_tokens;
+  int gqa_group_size;   // heads per KV group (>=1)
+  int comp_block_size;  // optional compression block size (0 disables)
 } sattn_blocktopk_params_t;
 
 void sattn_rvv_block_topk(

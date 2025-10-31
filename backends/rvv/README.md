@@ -59,6 +59,16 @@ Select precision and optional per-tensor scales via runner flags:
 ./sattn_rvv_runner --spec block_local_global --L 128 --D 32 --block_size 16 --keep_x1000 120 \
   --precision i4 --scale_q_x1000 125 --scale_k_x1000 125 --scale_v_x1000 125
 
+### Grouped-query sharing and compression blocks
+
+```
+# Shared selection across heads in a group (GQA)
+./sattn_rvv_runner --spec block_local_global --L 128 --D 32 --block_size 16 --gqa_group_size 2
+
+# Use compression blocks (compute on pooled keys), then map to selection blocks
+./sattn_rvv_runner --spec block_local_global --L 128 --D 32 --block_size 16 --comp_block_size 8
+```
+
 Calibrate suggested scales (synthetic data matching runner initialization):
 
 ```

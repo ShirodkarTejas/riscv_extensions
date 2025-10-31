@@ -29,6 +29,8 @@ def _capture_attrs(block):
         'nm_n': geti('nm_n') or 0,
         'nm_m': geti('nm_m') or 0,
         'lsh_buckets': geti('lsh_buckets') or 0,
+        'gqa_group_size': geti('gqa_group_size') or 1,
+        'comp_block_size': geti('comp_block_size') or 0,
         'precision': gets('precision') or 'fp32',
         'scale_q': getf('scale_q'),
         'scale_k': getf('scale_k'),
@@ -72,6 +74,11 @@ def main():
            '--window', str(attrs['window_size']), '--block_size', str(attrs['block_size']),
            '--global_tokens', str(attrs['global_tokens']), '--nm_n', str(attrs['nm_n']), '--nm_m', str(attrs['nm_m']),
            '--lsh_buckets', str(attrs['lsh_buckets']), '--keep_x1000', str(keep_x1000)]
+    # Optional group/compression knobs
+    if attrs.get('gqa_group_size'):
+        cmd += ['--gqa_group_size', str(attrs['gqa_group_size'])]
+    if attrs.get('comp_block_size'):
+        cmd += ['--comp_block_size', str(attrs['comp_block_size'])]
     # Precision/scales
     precision = attrs.get('precision') or 'fp32'
     if precision:

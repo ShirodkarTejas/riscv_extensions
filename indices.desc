@@ -8,3 +8,5 @@ nm_n=0
 nm_m=0
 lsh_buckets=0
 keep_ratio=0.0
+gqa_group_size=1
+comp_block_size=0

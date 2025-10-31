@@ -42,12 +42,16 @@ module rocc_sattn #(
   localparam REG_DMA_BYTES = 16'h00A0; // dma-like bytes (q/k writes)
   localparam REG_DMA_QBYTES= 16'h00A8; // dma bytes into Q spad
   localparam REG_DMA_KBYTES= 16'h00B0; // dma bytes into K spad
+  localparam REG_GQA_GSZ  = 16'h00C8; // grouped-query heads per KV group
+  localparam REG_COMP_BS  = 16'h00D0; // compression block size (0 disables)
   localparam REG_IDX_WADDR = 16'h0070; // write index RAM address
   localparam REG_IDX_WDATA = 16'h0078; // write index RAM data (commit)
 
   logic [63:0] q_base, k_base, v_base, o_base, idx_base, strd_base;
   logic [31:0] m_rows, head_dim_d, block_size, k_blocks, s_tokens;
   logic [31:0] scale_fp_bits;
+  logic [31:0] gqa_group_size;
+  logic [31:0] comp_block_size;
 
   typedef enum logic [7:0] {
     CMD_NOP         = 8'h00,
@@ -161,6 +165,7 @@ module rocc_sattn #(
       m_rows <= '0; head_dim_d <= '0; block_size <= '0; k_blocks <= '0; s_tokens <= '0;
       scale_fp_bits <= '0; cmd_reg <= '0; idx_wen <= 1'b0; idx_waddr <= '0; idx_wdata <= '0;
       dma_q_bytes <= 64'd0; dma_k_bytes <= 64'd0;
+      gqa_group_size <= 32'd1; comp_block_size <= 32'd0;
     end else if (mmio_wen) begin
       unique case (mmio_addr)
         REG_Q_BASE:    q_base <= mmio_wdata;
@@ -175,6 +180,8 @@ module rocc_sattn #(
         REG_K_BLOCKS:  k_blocks <= mmio_wdata[31:0];
         REG_S_TOKENS:  s_tokens <= mmio_wdata[31:0];
         REG_SCALE_FP:  scale_fp_bits <= mmio_wdata[31:0];
+        REG_GQA_GSZ:   gqa_group_size <= mmio_wdata[31:0];
+        REG_COMP_BS:   comp_block_size <= mmio_wdata[31:0];
         REG_CMD:       cmd_reg <= mmio_wdata[7:0];
         REG_IDX_WADDR: begin idx_waddr <= mmio_wdata[15:0]; idx_wen <= 1'b0; end
         REG_IDX_WDATA: begin idx_wdata <= mmio_wdata[15:0]; idx_wen <= 1'b1; end
@@ -201,6 +208,8 @@ module rocc_sattn #(
       REG_K_BLOCKS:  mmio_rdata = {32'd0, k_blocks};
       REG_S_TOKENS:  mmio_rdata = {32'd0, s_tokens};
       REG_SCALE_FP:  mmio_rdata = {32'd0, scale_fp_bits};
+      REG_GQA_GSZ:   mmio_rdata = {32'd0, gqa_group_size};
+      REG_COMP_BS:   mmio_rdata = {32'd0, comp_block_size};
       REG_CMD:       mmio_rdata = {62'd0, (state==RUN), (state==DONE)}; // [1]=busy, [0]=done
       REG_ACC_SUM:   mmio_rdata = acc_sum;
       REG_SOF_SUM:   mmio_rdata = sof_sum;
@@ -234,10 +243,27 @@ module rocc_sattn #(
       run_cnt <= '0; run_len <= 16'd16;
       gather_cycles <= 64'd0; mac_cycles <= 64'd0; dma_bytes <= 64'd0;
     end else begin
+      // Hoisted temporaries for Verilator friendliness
+      logic [15:0] base_len;
+      logic [31:0] scale_mul;
+      logic [15:0] len16;
+      /* verilator lint_off UNUSEDSIGNAL */
+      logic [31:0] mul32;
+      /* verilator lint_on UNUSEDSIGNAL */
       if (state == IDLE && cmd_seen && cmd_reg != CMD_NOP) begin
         // crude latency model: function of m_rows, head_dim, s_tokens (widen to 16b)
-        run_len <= (m_rows[15:0] + head_dim_d[15:0] + s_tokens[15:0]);
-        if (run_len == 16'd0) run_len <= 16'd16;
+        base_len = (m_rows[15:0] + head_dim_d[15:0] + s_tokens[15:0]);
+        if (base_len == 16'd0) base_len = 16'd16;
+        // scale by GQA group size and adjust for compression block size vs selection block size
+        scale_mul = (gqa_group_size == 0) ? 32'd1 : gqa_group_size;
+        if (comp_block_size != 32'd0 && block_size != 32'd0) begin
+          // fewer effective tokens when compression blocks are smaller than selection blocks
+          scale_mul = (scale_mul * comp_block_size) / block_size;
+          if (scale_mul == 32'd0) scale_mul = 32'd1;
+        end
+        mul32 = (32'(base_len) * scale_mul);
+        len16 = mul32[15:0];
+        run_len <= (len16 != 16'd0) ? len16 : 16'd16;
       end
       if (state == RUN) run_cnt <= run_cnt + 16'd1; else run_cnt <= '0;
       // Latch core checksum after entering DONE to allow child to register its output

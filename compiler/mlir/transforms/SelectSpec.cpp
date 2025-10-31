@@ -39,6 +39,8 @@ struct SelectSpecPass : public PassWrapper<SelectSpecPass, OperationPass<ModuleO
       int64_t D = toI64(op->getAttr("tile_D"), 64);
       int64_t W = toI64(op->getAttr("window_size"), 0);
       int64_t BS = toI64(op->getAttr("block_size"), 64);
+      int64_t GQA = toI64(op->getAttr("gqa_group_size"), 1);
+      int64_t CBS = toI64(op->getAttr("comp_block_size"), 0);
       double keep = toF64(op->getAttr("keep_ratio"), 0.12);
       if (BS <= 0) BS = 64;
       // Env override: SATTN_FORCE_SPEC takes precedence
@@ -79,6 +81,14 @@ struct SelectSpecPass : public PassWrapper<SelectSpecPass, OperationPass<ModuleO
       double base = double(S) * double(D);
       double cost_bsr = density_bsr * base * cacheFactor;
       double cost_sw = density_sw * base;
+      // Heuristics:
+      // - GQA shares block selection across heads: penalize sliding_window by group size
+      if (GQA > 1) cost_sw *= (double)GQA;
+      // - Compression blocks smaller than selection blocks reduce scoring cost: discount BSR
+      if (CBS > 0 && BS > 0) {
+        double ratio = std::max(0.25, std::min(1.0, (double)CBS / (double)BS));
+        cost_bsr *= ratio;
+      }
       // Env probes: allow disabling one side for HW/impl constraints
       if (llvm::sys::Process::GetEnv("SATTN_DISABLE_BSR")) cost_bsr = std::numeric_limits<double>::infinity();
       if (llvm::sys::Process::GetEnv("SATTN_DISABLE_SW")) cost_sw = std::numeric_limits<double>::infinity();

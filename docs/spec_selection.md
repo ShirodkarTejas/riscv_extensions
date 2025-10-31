@@ -89,6 +89,26 @@ To derive symmetric per-tensor scales (`i8`/`i4`) from synthetic data consistent
 
 You can then add `scale_q/scale_k/scale_v` to your MLIR or pass `--scale_*_x1000` to the runner.
 
+### Grouped-query sharing and compression blocks
+
+Attributes understood by both RVV and RoCC paths:
+
+- `gqa_group_size: i64` — number of query heads that share a single key/value cache (grouped-query attention). Selection is shared across heads in the group.
+- `comp_block_size: i64` — optional compression block size used to form intermediate attention scores; these are mapped/pooled into selection blocks. Set 0 to disable (default).
+
+Runner flags:
+
+```
+--gqa_group_size N        # e.g., 2
+--comp_block_size C       # e.g., 8
+```
+
+These attributes propagate through lowering. The RVV path uses them to share block selection across heads (GQA) and to optionally use compression-block scoring before selection. The RoCC sim reflects them in a simple latency model and prints them in `spec_info`.
+
+Selector influence (heuristic):
+- If `gqa_group_size > 1`, the selector penalizes `sliding_window` (more per-head work) so `block_local_global` is preferred when otherwise close.
+- If `comp_block_size < block_size`, the selector discounts `block_local_global` cost (cheaper importance scoring), nudging selection toward block-based specs.
+
 - End-to-end compile+sim wrapper:
 ```
 /opt/venv/bin/python compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir

@@ -46,6 +46,7 @@ int main(int argc, char** argv) {
 
   // Program descriptor (defaults; can be overridden by desc file)
   uint32_t M = 4, D = 16, BS = 4, KB = 4, S = 16, GT = 0, NMN = 0, NMM = 0, LSHB = 0;
+  uint32_t GQA_GS = 1, COMP_BS = 0;
   float KEEP = 0.0f;
   // Optionally read a descriptor file passed as argv[2]: key=value per line
   if (argc > 2) {
@@ -64,6 +65,8 @@ int main(int argc, char** argv) {
           else if (!strcmp(key, "nm_n")) NMN = (uint32_t)val;
           else if (!strcmp(key, "nm_m")) NMM = (uint32_t)val;
           else if (!strcmp(key, "lsh_buckets")) LSHB = (uint32_t)val;
+        } else if (sscanf(buf, "%63[^=]=%d", key, &val) == 2) {
+          // already handled by first branch
         }
       }
       fclose(df);
@@ -79,6 +82,19 @@ int main(int argc, char** argv) {
         }
         fclose(df);
       }
+      // re-open to parse optional gqa/comp
+      df = fopen(argv[2], "r");
+      if (df) {
+        char buf3[128];
+        while (fgets(buf3, sizeof(buf3), df)) {
+          char key3[64]; int v3;
+          if (sscanf(buf3, "%63[^=]=%d", key3, &v3) == 2) {
+            if (!strcmp(key3, "gqa_group_size")) GQA_GS = (uint32_t)v3;
+            else if (!strcmp(key3, "comp_block_size")) COMP_BS = (uint32_t)v3;
+          }
+        }
+        fclose(df);
+      }
     }
   }
   mmio_write(0x0030, M);
@@ -86,6 +102,8 @@ int main(int argc, char** argv) {
   mmio_write(0x0040, BS);
   mmio_write(0x0048, KB);
   mmio_write(0x0050, S);
+  if (GQA_GS) mmio_write(0x00C8, GQA_GS);
+  if (COMP_BS) mmio_write(0x00D0, COMP_BS);
   // Program per-spec MMIOs if present
   if (NMN) mmio_write(0x00B8, NMN);
   if (NMM) mmio_write(0x00C0, NMM);
@@ -189,7 +207,7 @@ int main(int argc, char** argv) {
          (unsigned long long)dmaq, (unsigned long long)dmak);
   printf("rocc_counters(proxy): gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
          (unsigned long long)proxy_gcy, (unsigned long long)proxy_mcy, (unsigned long long)proxy_dma);
-  printf("spec_info: global_tokens=%u nm=(%u,%u) lsh_buckets=%u keep_ratio=%.3f\n", GT, NMN, NMM, LSHB, KEEP);
+  printf("spec_info: global_tokens=%u gqa_group_size=%u comp_block_size=%u nm=(%u,%u) lsh_buckets=%u keep_ratio=%.3f\n", GT, GQA_GS, COMP_BS, NMN, NMM, LSHB, KEEP);
   // Print simple utilization estimates
   unsigned long long expected_mac = (unsigned long long)M * (unsigned long long)S * (unsigned long long)D;
   double util_mac = expected_mac ? ((double)mcy / (double)expected_mac) : 0.0;

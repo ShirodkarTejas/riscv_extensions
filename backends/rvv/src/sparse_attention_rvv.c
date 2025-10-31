@@ -585,112 +585,64 @@ void sattn_rvv_block_topk(
   float* block_scores = (float*)malloc((size_t)num_blocks * sizeof(float));
   if (!block_idx || !block_scores) { if (block_idx) free(block_idx); if (block_scores) free(block_scores); return; }
 
-  for (int64_t b = 0; b < B; ++b) {
-    for (int64_t h = 0; h < H; ++h) {
-      // Precompute K block means: mean over tokens in block for each block
-      // Here we compute on-the-fly per row for simplicity; an optimization would cache
+  int gsz = params.gqa_group_size > 0 ? params.gqa_group_size : 1;
+  int cbs = params.comp_block_size > 0 ? params.comp_block_size : 0;
+  if (gsz == 1 && cbs == 0) {
+    for (int64_t b = 0; b < B; ++b) {
+      for (int64_t h = 0; h < H; ++h) {
         for (int64_t i = 0; i < L; ++i) {
-        // zero output row
-        for (int64_t d = 0; d < D; ++d) O[offset_bhld(b, h, i, d, B, H, L, D)] = 0.f;
-        // score blocks
-        for (int64_t nb = 0; nb < num_blocks; ++nb) {
-          int64_t s = nb * block;
-          int64_t e = s + block; if (e > L) e = L;
-          // mean over block
-          float dot = 0.f;
-          int64_t cnt = (int64_t)(e - s);
-#ifdef __riscv_vector
-          // Gather K rows for this block into a small temporary to improve locality
-          // Note: stack allocation of variable length arrays is not portable; use alloca-ish pattern if desired.
-          // Here we do direct access without an intermediate buffer for simplicity and sum dot products.
-          dot = reduce_block_sumdot_f32_rvv(
-              &Q[offset_bhld(b, h, i, 0, B, H, L, D)],
-              &K[offset_bhld(b, h, s, 0, B, H, L, D)],
-              cnt, D);
-          _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * sizeof(float) + (uint64_t)D * sizeof(float);
-          _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
-#else
-          for (int64_t j = s; j < e; ++j) {
-            for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b, h, i, d, B, H, L, D)] * K[offset_bhld(b, h, j, d, B, H, L, D)];
+          for (int64_t d = 0; d < D; ++d) O[offset_bhld(b, h, i, d, B, H, L, D)] = 0.f;
+          for (int64_t nb = 0; nb < num_blocks; ++nb) {
+            int64_t s = nb * block; int64_t e = s + block; if (e > L) e = L;
+            float dot = 0.f; int64_t cnt = (int64_t)(e - s);
+            for (int64_t j = s; j < e; ++j) for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b, h, i, d, B, H, L, D)] * K[offset_bhld(b, h, j, d, B, H, L, D)];
+            _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * sizeof(float) + (uint64_t)D * sizeof(float);
+            _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
+            block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f;
+            block_idx[nb] = (int)nb;
           }
-          // Proxy counters: read Q once (D) and K cnt*D, perform cnt*D FMAs
-          _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * sizeof(float) + (uint64_t)D * sizeof(float);
-          _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
-#endif
-          block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f;
-          block_idx[nb] = (int)nb;
-        }
-        // select top k_blocks by partial selection (naive O(N log N))
-        // simple sort by score descending
-        for (int64_t x = 0; x < num_blocks - 1; ++x) {
-          for (int64_t y = x + 1; y < num_blocks; ++y) {
+          for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
             if (block_scores[y] > block_scores[x]) { float ts = block_scores[x]; block_scores[x] = block_scores[y]; block_scores[y] = ts; int ti = block_idx[x]; block_idx[x] = block_idx[y]; block_idx[y] = ti; }
+          float denom = 0.f; const int gtok = params.global_tokens > 0 ? (params.global_tokens < (int)L ? params.global_tokens : (int)L) : 0;
+          int sel_cap = (int)(k_blocks * block + gtok); int sel_cnt = 0; int* sel_idx = (int*)malloc((size_t)sel_cap * sizeof(int));
+          for (int j = 0; j < gtok && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = j;
+          for (int kb = 0; kb < k_blocks && kb < num_blocks; ++kb) { int nb = block_idx[kb]; int64_t s = (int64_t)nb * block; int64_t e = s + block; if (e > L) e = L; for (int64_t j = s; j < e && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = (int)j; }
+          for (int t = 0; t < sel_cnt; ++t) { int j = sel_idx[t]; float dot = 0.f; for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)]; float w = expf(dot * scale); denom += w; for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)]; _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 3; _rvv_ctrs.bw += (uint64_t)D * sizeof(float); _rvv_ctrs.mac += (uint64_t)D; }
+          free(sel_idx);
+          float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+        }
+      }
+    }
+  } else {
+    for (int64_t b = 0; b < B; ++b) {
+      for (int64_t hg = 0; hg < H; hg += gsz) {
+        for (int64_t i = 0; i < L; ++i) {
+          for (int64_t d = 0; d < D; ++d) for (int64_t hh = 0; hh < gsz && (hg+hh) < H; ++hh) O[offset_bhld(b,hg+hh,i,d,B,H,L,D)] = 0.f;
+          for (int64_t nb = 0; nb < num_blocks; ++nb) { block_scores[nb] = 0.f; block_idx[nb] = (int)nb; }
+          for (int64_t hh = 0; hh < gsz && (hg+hh) < H; ++hh) {
+            int64_t h = hg + hh;
+            if (cbs > 0) {
+              int64_t ncomp = (L + cbs - 1) / cbs; const float sc = 1.0f / sqrtf((float)D);
+              float* pc = (float*)malloc((size_t)ncomp * sizeof(float)); if (!pc) continue;
+              for (int64_t cb = 0; cb < ncomp; ++cb) { int64_t s = cb * cbs, e = s + cbs; if (e > L) e = L; int64_t cnt = e - s; float dot = 0.f; for (int64_t d = 0; d < D; ++d) {
+                  float acc = 0.f; for (int64_t j = s; j < e; ++j) acc += K[offset_bhld(b,h,j,d,B,H,L,D)]; dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * (acc / (float)cnt);
+                } pc[cb] = dot * sc; }
+              for (int64_t nb = 0; nb < num_blocks; ++nb) { int64_t s = nb * block; int64_t e = s + block; if (e > L) e = L; int64_t c0 = s / cbs; int64_t c1 = (e-1) / cbs; float acc = 0.f; for (int64_t cb = c0; cb <= c1 && cb < ncomp; ++cb) acc += pc[cb]; block_scores[nb] += acc; }
+              free(pc);
+            } else {
+              for (int64_t nb = 0; nb < num_blocks; ++nb) { int64_t s = nb * block; int64_t e = s + block; if (e > L) e = L; int64_t cnt = (int64_t)(e - s); float dot = 0.f; for (int64_t j = s; j < e; ++j) for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)]; block_scores[nb] += (cnt>0 ? (dot/(float)cnt) : -1e30f); _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * sizeof(float) + (uint64_t)D * sizeof(float); _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D; }
+            }
           }
+          for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
+            if (block_scores[y] > block_scores[x]) { float ts = block_scores[x]; block_scores[x] = block_scores[y]; block_scores[y] = ts; int ti = block_idx[x]; block_idx[x] = block_idx[y]; block_idx[y] = ti; }
+          float denom = 0.f; const int gtok = params.global_tokens > 0 ? (params.global_tokens < (int)L ? params.global_tokens : (int)L) : 0;
+          int sel_cap = (int)(k_blocks * block + gtok); int sel_cnt = 0; int* sel_idx = (int*)malloc((size_t)sel_cap * sizeof(int));
+          for (int j = 0; j < gtok && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = j;
+          for (int kb = 0; kb < k_blocks && kb < num_blocks; ++kb) { int nb = block_idx[kb]; int64_t s = (int64_t)nb * block; int64_t e = s + block; if (e > L) e = L; for (int64_t j = s; j < e && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = (int)j; }
+          for (int64_t hh = 0; hh < gsz && (hg+hh) < H; ++hh) { int64_t h = hg + hh; for (int t = 0; t < sel_cnt; ++t) { int j = sel_idx[t]; float dot = 0.f; for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)]; float w = expf(dot * scale); denom += w; for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)]; }}
+          free(sel_idx);
+          float inv = 1.f / (denom + 1e-12f); for (int64_t hh = 0; hh < gsz && (hg+hh) < H; ++hh) { int64_t h = hg + hh; for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv; }
         }
-        // accumulate attention over selected tokens via index-driven gather
-        float denom = 0.f;
-        const int gtok = params.global_tokens > 0 ? (params.global_tokens < (int)L ? params.global_tokens : (int)L) : 0;
-        // Build selected token index list
-        int sel_cap = (int)(k_blocks * block + gtok);
-        int sel_cnt = 0;
-        int* sel_idx = (int*)malloc((size_t)sel_cap * sizeof(int));
-        for (int j = 0; j < gtok && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = j;
-        for (int kb = 0; kb < k_blocks && kb < num_blocks; ++kb) {
-          int nb = block_idx[kb];
-          int64_t s = (int64_t)nb * block;
-          int64_t e = s + block; if (e > L) e = L;
-          for (int64_t j = s; j < e && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = (int)j;
-        }
-#ifdef __riscv_vector
-        float* K_sel = (float*)malloc((size_t)sel_cnt * (size_t)D * sizeof(float));
-        float* V_sel = (float*)malloc((size_t)sel_cnt * (size_t)D * sizeof(float));
-        if (K_sel && V_sel) {
-          gather_rows_indexed_f32(&K[offset_bhld(b, h, 0, 0, B, H, L, D)], sel_idx, sel_cnt, D, K_sel);
-          gather_rows_indexed_f32(&V[offset_bhld(b, h, 0, 0, B, H, L, D)], sel_idx, sel_cnt, D, V_sel);
-          _rvv_ctrs.br += (uint64_t)sel_cnt * (uint64_t)D * sizeof(float) * 2;
-          for (int t = 0; t < sel_cnt; ++t) {
-            float dot = dot_f32_rvv(&Q[offset_bhld(b, h, i, 0, B, H, L, D)], &K_sel[(int64_t)t * D], D);
-            float w = expf(dot * scale);
-            denom += w;
-            axpy_f32_rvv(w, &V_sel[(int64_t)t * D], &O[offset_bhld(b, h, i, 0, B, H, L, D)], D);
-            _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float); _rvv_ctrs.mac += (uint64_t)D;
-          }
-        } else {
-          // Fallback to direct
-          for (int t = 0; t < sel_cnt; ++t) {
-            int j = sel_idx[t];
-            float dot = dot_f32_rvv(&Q[offset_bhld(b, h, i, 0, B, H, L, D)], &K[offset_bhld(b, h, j, 0, B, H, L, D)], D);
-            float w = expf(dot * scale);
-            denom += w;
-            axpy_f32_rvv(w, &V[offset_bhld(b, h, j, 0, B, H, L, D)], &O[offset_bhld(b, h, i, 0, B, H, L, D)], D);
-          }
-        }
-        if (K_sel) free(K_sel);
-        if (V_sel) free(V_sel);
-#else
-        for (int t = 0; t < sel_cnt; ++t) {
-          int j = sel_idx[t];
-          float dot = 0.f;
-          for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b, h, i, d, B, H, L, D)] * K[offset_bhld(b, h, j, d, B, H, L, D)];
-          // Proxy counters for dot
-          _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2;
-          _rvv_ctrs.mac += (uint64_t)D;
-          float w = expf(dot * scale);
-          denom += w;
-          for (int64_t d = 0; d < D; ++d) O[offset_bhld(b, h, i, d, B, H, L, D)] += w * V[offset_bhld(b, h, j, d, B, H, L, D)];
-          // Proxy counters for axpy
-          _rvv_ctrs.br += (uint64_t)D * sizeof(float);
-          _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
-        }
-#endif
-        free(sel_idx);
-
-        float inv = 1.f / (denom + 1e-12f);
-#ifdef __riscv_vector
-        size_t idx = 0; for (; idx < (size_t)D;) { size_t vl = vsetvl_e32m1((size_t)(D - idx)); vfloat32m1_t vy = vle32_v_f32m1(&O[offset_bhld(b, h, i, 0, B, H, L, D)] + idx, vl); vy = vfmul_vf_f32m1(vy, inv, vl); vse32_v_f32m1(&O[offset_bhld(b, h, i, 0, B, H, L, D)] + idx, vy, vl); idx += vl; }
-#else
-        for (int64_t d = 0; d < D; ++d) O[offset_bhld(b, h, i, d, B, H, L, D)] *= inv;
-#endif
       }
     }
   }

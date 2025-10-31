@@ -19,6 +19,8 @@ def parse_values(mlir_text: str):
             's_tokens': geti('s_tokens', 16),
             'k_blocks': geti('k_blocks', 4),
             'global_tokens': geti('global_tokens', 0),
+            'gqa_group_size': geti('gqa_group_size', 1),
+            'comp_block_size': geti('comp_block_size', 0),
         }
     # Fallback from unlowered attrs
     # Try to isolate the attribute dict first (more robust across formatting)
@@ -43,6 +45,8 @@ def parse_values(mlir_text: str):
         'nm_m': find_int('nm_m', 0),
         'lsh_buckets': find_int('lsh_buckets', 0),
         'keep_ratio': find_float('keep_ratio', 0.0),
+        'gqa_group_size': find_int('gqa_group_size', 1),
+        'comp_block_size': find_int('comp_block_size', 0),
     }
 
 
@@ -54,7 +58,7 @@ def main():
     txt = open(args.in_mlir).read()
     vals = parse_values(txt)
     with open(args.out_desc, 'w') as f:
-        for k in ['m_rows', 'head_dim_d', 'block_size', 'k_blocks', 's_tokens', 'global_tokens', 'nm_n', 'nm_m', 'lsh_buckets', 'keep_ratio']:
+        for k in ['m_rows', 'head_dim_d', 'block_size', 'k_blocks', 's_tokens', 'global_tokens', 'nm_n', 'nm_m', 'lsh_buckets', 'keep_ratio', 'gqa_group_size', 'comp_block_size']:
             f.write(f"{k}={vals.get(k, 0)}\n")
 
 
