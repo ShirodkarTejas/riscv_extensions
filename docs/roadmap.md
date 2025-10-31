@@ -26,18 +26,21 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - Selector overrides: `force_spec` attr and env vars (`SATTN_FORCE_SPEC`, `SATTN_DISABLE_SW`, `SATTN_DISABLE_BSR`); per-spec hooks add `blg_enabled` in lowered ops.
  - Specs expanded: selector recognizes `nm_structured` (nm_n/nm_m) and `topk_per_query` (topk_k); lowerings add `nm_enabled`/`topk_enabled`.
  - LSH added: selector recognizes `lsh_buckets` → `spec = lsh`; lowerings add `lsh_enabled`.
+ - RVV: added kernels and helpers for SW/TopK (BLG), N:M (wrapper), LSH (bucketed); segmented reductions and softmax-row helpers; CPU references and compare tests all passing.
+ - RVV runner and MLIR bridge: `sattn_rvv_runner` dispatches kernels by spec; `sattn_run_rvv_from_mlir.py` lowers, parses `sattn.rvv_call`, and runs the runner; tests for SW/BLG/N:M/LSH pass.
+ - RoCC counters refined: per-cycle gather/mac increments and DMA byte counting; pytest asserts non-zero counters.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
    - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
    - Hook indices/BSR masks from IR into emitters; unify text/JSON emission
 2) Multi-spec support and selection
-   - Extend `sattn.spec` choices (BLG, N:M, topk_per_query done; LSH pending); carry through to backends (hooks added for BLG/N:M/top-k)
-   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (hooks added; CPU ref pending)
+   - Extend `sattn.spec` choices (BLG, N:M, topk_per_query, LSH done); carry through to backends (hooks added; RVV kernels/stubs implemented)
+   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (RVV refs added; RoCC functional checks pending)
    - Upgrade selector to a lightweight cost model (extended); add hardware probe; allow override (env/attr overrides added; probe flags minimal)
 3) RVV performance path
-   - Complete segmented reductions and gather/scatter coverage across specs; vector dot and tile softmax
-   - Validate on Spike/QEMU-RVV or dev board; add bandwidth/compute counters to benches
+   - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar
+   - Validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches
 4) RoCC compute datapath
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
@@ -52,8 +55,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - Stage 8: Expanded evaluation matrix and plots
 
 ## Next actions (short)
-- MLIR: restore real `sattn-opt` passes and add FileCheck tests; wire pass CI target
-- Multi-spec: add `sattn.spec` attribute and support BSR + sliding_window end-to-end; add a simple selector
-- RVV: finish segmented reductions + gather/scatter coverage; add e2e tests for the RVV path
-- RoCC: keep counters and checksums; incrementally refine gather/DMA/MAC timing
-- E2E: add a test target invoking `sattn_compile_and_sim.py` with sample MLIR and asserting PASS
+- MLIR: extend per-spec lowering surfaces; keep FileCheck tests green
+- Multi-spec: maintain selector overrides/probes as specs expand; add RoCC-side per-spec semantics
+- RVV: wire autotune hooks into runner; keep compare tests for any new kernels
+- RoCC: refine counters and stub fidelity; add simple utilization invariants in tests
+- E2E: extend runner to accept emitted indices/masks; integrate with roundtrip scripts

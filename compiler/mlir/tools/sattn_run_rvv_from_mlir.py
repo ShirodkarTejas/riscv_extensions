@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+import argparse, os, re, subprocess, sys, tempfile
+
+
+def run(cmd):
+    print('[run]', ' '.join(cmd))
+    return subprocess.check_output(cmd, text=True)
+
+
+def parse_attrs(txt):
+    m = re.search(r"sattn\.rvv_call[^\{]*\{([^}]*)\}", txt, re.MULTILINE | re.DOTALL)
+    if not m:
+        return {}
+    attrs = m.group(1)
+    def geti(name):
+        mm = re.search(rf"{name}\s*=\s*([0-9]+)", attrs)
+        return int(mm.group(1)) if mm else None
+    def getf(name):
+        mm = re.search(rf"{name}\s*=\s*([0-9]+\.[0-9]+)", attrs)
+        return float(mm.group(1)) if mm else None
+    def gets(name):
+        mm = re.search(rf"{name}\s*=\s*\"([^\"]+)\"", attrs)
+        return mm.group(1) if mm else None
+    return {
+        'spec': gets('spec') or 'sliding_window',
+        'L': geti('s_tokens') or geti('tile_S') or 128,
+        'D': geti('head_dim_d') or geti('tile_D') or 32,
+        'window_size': geti('window_size') or 8,
+        'block_size': geti('block_size') or 64,
+        'keep_ratio': getf('keep_ratio') or 0.12,
+        'global_tokens': geti('global_tokens') or 0,
+        'nm_n': geti('nm_n') or 0,
+        'nm_m': geti('nm_m') or 0,
+        'lsh_buckets': geti('lsh_buckets') or 0,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description='Run RVV kernel selected by MLIR spec')
+    ap.add_argument('--mlir', required=True)
+    ap.add_argument('--sattn-opt', default='build/mlir/tools/sattn-opt/sattn-opt')
+    ap.add_argument('--runner', default='build/rvv/sattn_rvv_runner')
+    args = ap.parse_args()
+
+    lowered = args.mlir + '.rvv.mlir'
+    try:
+        if not os.path.exists(args.sattn_opt):
+            raise FileNotFoundError(args.sattn_opt)
+        run([args.sattn_opt, args.mlir, '--allow-unregistered-dialect', '-pass-pipeline=builtin.module(sattn-lower-rvv)'])
+        # Since sattn-opt writes to stdout, capture and save
+        out = run([args.sattn_opt, args.mlir, '--allow-unregistered-dialect', '-pass-pipeline=builtin.module(sattn-lower-rvv)'])
+        with open(lowered, 'w') as f: f.write(out)
+        txt = out
+    except Exception as e:
+        print('[warn] sattn-opt unavailable or failed; using input MLIR directly:', e)
+        txt = open(args.mlir).read()
+
+    attrs = parse_attrs(txt)
+    keep_x1000 = int(round((attrs['keep_ratio'] if attrs['keep_ratio'] is not None else 0.12) * 1000.0))
+    cmd = [args.runner,
+           '--spec', attrs['spec'], '--L', str(attrs['L']), '--D', str(attrs['D']),
+           '--window', str(attrs['window_size']), '--block_size', str(attrs['block_size']),
+           '--global_tokens', str(attrs['global_tokens']), '--nm_n', str(attrs['nm_n']), '--nm_m', str(attrs['nm_m']),
+           '--lsh_buckets', str(attrs['lsh_buckets']), '--keep_x1000', str(keep_x1000)]
+    out = run(cmd)
+    print(out)
+
+
+if __name__ == '__main__':
+    main()
+
+

@@ -36,4 +36,7 @@ target_link_libraries(sattn_rvv_compare_lsh PRIVATE sattn_rvv m)
 add_executable(sattn_rvv_compare_sw bench/compare_sw_ref.c)
 target_link_libraries(sattn_rvv_compare_sw PRIVATE sattn_rvv m)
 
+add_executable(sattn_rvv_runner bench/rvv_runner.c)
+target_link_libraries(sattn_rvv_runner PRIVATE sattn_rvv m)
+
 
