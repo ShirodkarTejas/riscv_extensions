@@ -52,6 +52,7 @@ def main():
     ap.add_argument('--mlir', required=True)
     ap.add_argument('--sattn-opt', default='build/mlir/tools/sattn-opt/sattn-opt')
     ap.add_argument('--runner', default='build/backends/rvv/sattn_rvv_runner')
+    ap.add_argument('--autotune', action='store_true')
     args = ap.parse_args()
 
     lowered = args.mlir + '.rvv.mlir'
@@ -94,6 +95,8 @@ def main():
         if os.path.exists(alt):
             cmd[0] = alt
 
+    if args.autotune:
+      cmd.append('--autotune')
     out = run(cmd)
     print(out)
 

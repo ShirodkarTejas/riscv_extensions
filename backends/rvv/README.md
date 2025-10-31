@@ -143,9 +143,14 @@ Calibration (optional, for i8/i4 scales):
 
 Current proxy metrics collected in this environment (runner on host, no RVV hardware):
 
-| Spec               | Precision | L | D | window | block_size | keep_x1000 | global_tokens | RVV proxy bytes_read | bytes_written | mac_flops |
-|--------------------|-----------|---|---|--------|------------|------------|---------------|----------------------|---------------|-----------|
-| sliding_window     | fp32      |128|32 | 8      | —          | —          | —             | 824,320              | 285,696       | 67,328    |
-| block_local_global | fp32      |128|32 | —      | 16         | 120        | 4             | 3,211,264            | 327,680       | 606,208   |
+<!-- metrics:start -->
+| Spec | L | D | RVV bytes_read | bytes_written | mac_flops |
+|---|---|---|---|---|---|
+| sliding_window | 128 | 32 | 824320 | 285696 | 67328 |
+| sliding_window i8 | 128 | 32 | 0 | 0 | 0 |
+| block_local_global | 128 | 32 | 3211264 | 327680 | 606208 |
+| block_local_global i4 | 128 | 32 | 0 | 0 | 0 |
+
+<!-- metrics:end -->
 
 “On-device” metrics (rdcycle) are TBD and will be added after running on RVV hardware. RoCC simulation counters (cycles/bytes) are available in the compiler docs and sim output.
