@@ -55,6 +55,33 @@ void sattn_rvv_block_topk(
     sattn_shape_t shape,
     sattn_blocktopk_params_t params);
 
+// N:M structured sparsity – simple wrapper mapping to block_topk with block_size=M, keep_ratio=N/M
+typedef struct {
+  int n; // tokens kept per group
+  int m; // group size
+} sattn_nm_params_t;
+
+void sattn_rvv_nm_structured(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params);
+
+// LSH/hashed buckets – simplified: token j participates for query i if (j % buckets) == (i % buckets)
+typedef struct {
+  int buckets; // number of hash buckets
+} sattn_lsh_params_t;
+
+void sattn_rvv_lsh(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params);
+
 // Segmented reductions: sum across contiguous segments of length seg_len.
 // src: [segments, seg_len], dst: [segments]
 void sattn_rvv_segmented_sum_f32(const float* src, float* dst,

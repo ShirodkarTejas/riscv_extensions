@@ -21,4 +21,19 @@ target_link_libraries(sattn_rvv_bench_blocktopk PRIVATE sattn_rvv m)
 add_executable(sattn_rvv_bench_cli bench/measure_cycles_cli.c)
 target_link_libraries(sattn_rvv_bench_cli PRIVATE sattn_rvv m)
 
+add_executable(sattn_rvv_compare_blocktopk bench/compare_blocktopk_ref.c)
+target_link_libraries(sattn_rvv_compare_blocktopk PRIVATE sattn_rvv m)
+
+add_executable(sattn_rvv_test_helpers bench/test_helpers.c)
+target_link_libraries(sattn_rvv_test_helpers PRIVATE sattn_rvv m)
+
+add_executable(sattn_rvv_compare_nm bench/compare_nm_ref.c)
+target_link_libraries(sattn_rvv_compare_nm PRIVATE sattn_rvv m)
+
+add_executable(sattn_rvv_compare_lsh bench/compare_lsh_ref.c)
+target_link_libraries(sattn_rvv_compare_lsh PRIVATE sattn_rvv m)
+
+add_executable(sattn_rvv_compare_sw bench/compare_sw_ref.c)
+target_link_libraries(sattn_rvv_compare_sw PRIVATE sattn_rvv m)
+
 

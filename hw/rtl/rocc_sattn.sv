@@ -236,7 +236,17 @@ module rocc_sattn #(
       if (state == RUN) run_cnt <= run_cnt + 16'd1; else run_cnt <= '0;
       // Latch core checksum after entering DONE to allow child to register its output
       if (state == DONE && is_spdot) acc_sum <= core_sum;
-      // Counters (approximate): on GATHER→RUN, add s_tokens*head_dim_d cycles and DMA bytes; on RUN→DONE for spdot, add MAC cycles
+      // Per-cycle counters
+      if (state == GATHER) begin
+        gather_cycles <= gather_cycles + 64'd1;
+      end
+      if (state == RUN && is_spdot) begin
+        mac_cycles <= mac_cycles + 64'd1;
+      end
+      // DMA bytes count writes into Q/K scratchpads
+      if (q_wen) dma_bytes <= dma_bytes + 64'd4;
+      if (k_wen) dma_bytes <= dma_bytes + 64'd4;
+      // Legacy approximate bumps on phase transitions (kept for stability)
       if (state == GATHER && state_n == RUN) begin
         logic [63:0] add_cyc;
         add_cyc = {{48{1'b0}}, s_tokens[15:0]} * {{48{1'b0}}, head_dim_d[15:0]};

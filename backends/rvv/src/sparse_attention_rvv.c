@@ -7,6 +7,69 @@
 #include <riscv_vector.h>
 #endif
 
+// Forward decls used by early helper implementations
+static inline int64_t offset_bhld(int64_t b, int64_t h, int64_t l, int64_t d,
+                                  int64_t B, int64_t H, int64_t L, int64_t D);
+#ifdef __riscv_vector
+static inline float dot_f32_rvv(const float* a, const float* b, int64_t n);
+static inline void axpy_f32_rvv(float alpha, const float* x, float* y, int64_t n);
+#endif
+#ifdef __riscv_vector
+void sattn_rvv_lsh(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int buckets = params.buckets > 0 ? params.buckets : 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float denom = 0.f;
+      int my_bucket = (int)(i % buckets);
+      for (int64_t j = 0; j < L; ++j) {
+        if ((int)(j % buckets) != my_bucket) continue;
+        float dot = dot_f32_rvv(&Q[offset_bhld(b,h,i,0,B,H,L,D)], &K[offset_bhld(b,h,j,0,B,H,L,D)], D);
+        float w = expf(dot * scale);
+        denom += w;
+        axpy_f32_rvv(w, &V[offset_bhld(b,h,j,0,B,H,L,D)], &O[offset_bhld(b,h,i,0,B,H,L,D)], D);
+        _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.bw += (uint64_t)D * sizeof(float); _rvv_ctrs.mac += (uint64_t)D;
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      size_t idx = 0; for (; idx < (size_t)D;) { size_t vl = vsetvl_e32m1((size_t)(D - idx)); vfloat32m1_t vy = vle32_v_f32m1(&O[offset_bhld(b,h,i,0,B,H,L,D)] + idx, vl); vy = vfmul_vf_f32m1(vy, inv, vl); vse32_v_f32m1(&O[offset_bhld(b,h,i,0,B,H,L,D)] + idx, vy, vl); idx += vl; }
+    }
+  }
+}
+#else
+void sattn_rvv_lsh(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int buckets = params.buckets > 0 ? params.buckets : 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float denom = 0.f; int my_bucket = (int)(i % buckets);
+      for (int64_t j = 0; j < L; ++j) {
+        if ((int)(j % buckets) != my_bucket) continue;
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+        float w = expf(dot * scale); denom += w;
+        for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+      }
+      float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+}
+#endif
+
 #ifdef __riscv
 static inline uint64_t rdcycle() {
   uint64_t c = 0;
@@ -330,6 +393,27 @@ void sattn_rvv_block_topk(
   free(block_scores);
 }
 
+
+#undef MIN
+#undef MAX
+#define MIN(a,b) ((a)<(b)?(a):(b))
+#define MAX(a,b) ((a)>(b)?(a):(b))
+
+void sattn_rvv_nm_structured(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params) {
+  int M = params.m > 0 ? params.m : 64;
+  float keep = (params.n > 0 && params.m > 0) ? ((float)params.n / (float)params.m) : 0.25f;
+  sattn_blocktopk_params_t p;
+  p.block_size = M;
+  p.keep_ratio = keep;
+  p.global_tokens = 0;
+  sattn_rvv_block_topk(Q,K,V,O,shape,p);
+}
 
 #ifdef __riscv_vector
 void sattn_rvv_segmented_sum_f32(const float* src, float* dst,
