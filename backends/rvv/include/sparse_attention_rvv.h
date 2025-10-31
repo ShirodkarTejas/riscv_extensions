@@ -14,6 +14,8 @@ typedef struct {
 typedef struct {
   int window_size;     // sliding window size (tokens per side)
   int block_size;      // token block size (for compatibility)
+  int dilation;        // stride between neighboring tokens in window (>=1)
+  int wrap;            // if non-zero, wrap indices (ring mode)
 } sattn_params_t;
 
 // Forward declare block_topk params to allow prototypes before its full definition.
@@ -179,6 +181,19 @@ void sattn_rvv_lsh(
     float* O,
     sattn_shape_t shape,
     sattn_lsh_params_t params);
+
+// Landmark attention: compress sequence to num_landmarks representatives and attend over them
+typedef struct {
+  int num_landmarks;
+} sattn_landmark_params_t;
+
+void sattn_rvv_landmark(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params);
 
 // Tiled variant of LSH selection
 void sattn_rvv_lsh_tiled(

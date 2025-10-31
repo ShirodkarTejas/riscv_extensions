@@ -126,6 +126,32 @@ Unified artifacts emitter (used by both RVV and simulation flows):
 
 The RVV runner bridge and the RoCC simulation wrapper both call this helper, keeping a single source of truth for emitted indices and descriptor fields.
 
+### Dilated/ring sliding-window (new)
+
+Attributes:
+- `dilation: i64` (>=1) — stride between neighboring tokens in the window; defaults to 1.
+- `wrap: i64` (0/1) — if set, indices wrap around the sequence (ring mode).
+
+Runner flags:
+```
+--dilation N
+--wrap 1
+```
+
+These affect the sliding-window kernels in the RVV path. Ring mode samples `2*window_size+1` positions per row with wrap-around; dilation spaces those positions by the given stride.
+
+### Landmark attention (new)
+
+Attributes:
+- `num_landmarks: i64` — number of landmark tokens to attend over (evenly spaced, simple variant).
+
+Runner flag:
+```
+--landmarks N
+```
+
+Current implementation uses evenly spaced representatives and attends over them (compressed attention). This provides a baseline for landmark-style sparsity.
+
 - End-to-end compile+sim wrapper:
 ```
 /opt/venv/bin/python compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir

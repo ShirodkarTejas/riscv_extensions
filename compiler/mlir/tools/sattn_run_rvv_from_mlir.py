@@ -24,11 +24,14 @@ def _capture_attrs(block):
         'D': geti('head_dim_d') or geti('tile_D') or 32,
         'window_size': geti('window_size') or 8,
         'block_size': geti('block_size') or 64,
+        'dilation': geti('dilation') or 1,
+        'wrap': geti('wrap') or 0,
         'keep_ratio': getf('keep_ratio') or 0.12,
         'global_tokens': geti('global_tokens') or 0,
         'nm_n': geti('nm_n') or 0,
         'nm_m': geti('nm_m') or 0,
         'lsh_buckets': geti('lsh_buckets') or 0,
+        'num_landmarks': geti('num_landmarks') or 0,
         'gqa_group_size': geti('gqa_group_size') or 1,
         'comp_block_size': geti('comp_block_size') or 0,
         'precision': gets('precision') or 'fp32',
@@ -73,6 +76,7 @@ def main():
     cmd = [args.runner,
            '--spec', attrs['spec'], '--L', str(attrs['L']), '--D', str(attrs['D']),
            '--window', str(attrs['window_size']), '--block_size', str(attrs['block_size']),
+           '--dilation', str(attrs['dilation']), '--wrap', str(attrs['wrap']),
            '--global_tokens', str(attrs['global_tokens']), '--nm_n', str(attrs['nm_n']), '--nm_m', str(attrs['nm_m']),
            '--lsh_buckets', str(attrs['lsh_buckets']), '--keep_x1000', str(keep_x1000)]
     # Optional group/compression knobs
@@ -91,6 +95,8 @@ def main():
                 cmd += ['--indices', idx_path]
         except Exception:
             pass
+    if attrs['spec'] == 'landmark' and attrs.get('num_landmarks'):
+        cmd += ['--landmarks', str(attrs['num_landmarks'])]
     # Precision/scales
     precision = attrs.get('precision') or 'fp32'
     if precision:

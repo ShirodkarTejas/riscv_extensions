@@ -60,7 +60,12 @@ This document summarizes what exists in the repo and what remains to reach a "mu
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
 5) Additional sparse attention types
-   - Sliding-window/dilated; block-local + global tokens; N:M structured; top-k per query; LSH/hashed buckets; (optional) ring/landmark
+   - Sliding-window/dilated (dilation + ring mode added) — done
+   - Landmark (evenly spaced representatives baseline) — done
+   - Block-local + global tokens — done
+   - N:M structured — done
+   - Top-k per query — done
+   - LSH/hashed buckets — done
 6) Packaging/UX
    - CLI for profiles/specs and selection; Python packaging; CI for CPU (CUDA optional) and sim
 

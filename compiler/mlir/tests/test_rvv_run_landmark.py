@@ -1,0 +1,17 @@
+import subprocess, sys
+
+
+def run_mlir(src):
+    p = 'compiler/mlir/tests/_tmp_rvv_landmark.mlir'
+    with open(p, 'w') as f:
+        f.write(src)
+    out = subprocess.check_output([sys.executable, 'compiler/mlir/tools/sattn_run_rvv_from_mlir.py', '--mlir', p], text=True)
+    return out
+
+
+def test_landmark_runs():
+    src = 'module {\n  "sattn.sparse_attention"() { spec = "landmark", num_landmarks = 16 : i64, tile_D = 32 : i64, tile_S = 128 : i64 } : () -> ()\n}\n'
+    out = run_mlir(src)
+    assert 'spec=landmark' in out
+
+

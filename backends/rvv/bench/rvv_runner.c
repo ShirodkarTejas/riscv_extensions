@@ -16,7 +16,9 @@ int main(int argc, char** argv) {
   const char* precision = "fp32"; // fp32 | bf16 | i8 | i4
   float scale_q = 0.05f, scale_k = 0.05f, scale_v = 0.05f;
   long B=1,H=1,L=128,D=32, window=8, block_size=64, global_tokens=0, nm_n=0, nm_m=0, lsh_buckets=0, tile_rows=0;
+  long dilation=1, wrap=0;
   long gqa_group_size=1, comp_block_size=0;
+  long landmarks=0;
   int autotune = 0;
   int calibrate = 0;
   const char* indices_path = NULL;
@@ -26,11 +28,13 @@ int main(int argc, char** argv) {
   (void)args(argc, argv, "--indices", &indices_path);
   argi(argc, argv, "--B", &B); argi(argc, argv, "--H", &H); argi(argc, argv, "--L", &L); argi(argc, argv, "--D", &D);
   argi(argc, argv, "--window", &window); argi(argc, argv, "--block_size", &block_size);
+  argi(argc, argv, "--dilation", &dilation); argi(argc, argv, "--wrap", &wrap);
   argi(argc, argv, "--global_tokens", &global_tokens); argi(argc, argv, "--nm_n", &nm_n); argi(argc, argv, "--nm_m", &nm_m);
   argi(argc, argv, "--lsh_buckets", &lsh_buckets); argi(argc, argv, "--keep_x1000", &keep_ratio_x1000);
   argi(argc, argv, "--tile_rows", &tile_rows);
   argi(argc, argv, "--gqa_group_size", &gqa_group_size);
   argi(argc, argv, "--comp_block_size", &comp_block_size);
+  argi(argc, argv, "--landmarks", &landmarks);
   {
     long tmp;
     if (argi(argc, argv, "--scale_q_x1000", &tmp)) scale_q = (float)tmp / 1000.0f;
@@ -77,7 +81,7 @@ int main(int argc, char** argv) {
     printf("autotune: spec=sliding_window tile_rows=%d rvv_bytes_read=%llu checksum=%.6f\n", best_tr, (unsigned long long)best_bytes, best_ck);
     free(Q); free(K); free(V); free(O); return 0;
   } else if (strcmp(spec, "sliding_window")==0) {
-    sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size };
+    sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size, .dilation = (int)dilation, .wrap = (int)wrap };
     if (strcmp(precision, "bf16")==0) {
       sattn_rvv_sliding_global_bf16(Q,K,V,O,s,p);
     } else if (strcmp(precision, "i8")==0) {
@@ -140,8 +144,11 @@ int main(int argc, char** argv) {
   } else if (strcmp(spec, "lsh")==0) {
     sattn_lsh_params_t p = { .buckets = (int)lsh_buckets };
     sattn_rvv_lsh(Q,K,V,O,s,p);
+  } else if (strcmp(spec, "landmark")==0) {
+    sattn_landmark_params_t p = { .num_landmarks = (int)(landmarks > 0 ? landmarks : 32) };
+    sattn_rvv_landmark(Q,K,V,O,s,p);
   } else if (strcmp(spec, "sliding_window_tiled")==0) {
-    sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size };
+    sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size, .dilation = (int)dilation, .wrap = (int)wrap };
     sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,4);
   } else if (strcmp(spec, "block_local_global_tiled")==0) {
     sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens, .gqa_group_size=(int)gqa_group_size, .comp_block_size=(int)comp_block_size };

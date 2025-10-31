@@ -164,6 +164,46 @@ void sattn_rvv_counters_get(sattn_rvv_counters_t* out) {
   if (!out) return; out->bytes_read = _rvv_ctrs.br; out->bytes_written = _rvv_ctrs.bw; out->mac_flops = _rvv_ctrs.mac;
 }
 
+void sattn_rvv_landmark(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  int nl = params.num_landmarks > 0 ? params.num_landmarks : (int)(L > 0 ? (L < 32 ? L : 32) : 1);
+  if (nl < 1) nl = 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  // Evenly spaced landmarks
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    // Precompute landmark indices
+    int* lm = (int*)malloc(sizeof(int) * (size_t)nl);
+    for (int i = 0; i < nl; ++i) { lm[i] = (int)((int64_t)i * L / nl); if (lm[i] >= (int)L) lm[i] = (int)L - 1; if (lm[i] < 0) lm[i] = 0; }
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float m = -INFINITY;
+      for (int li = 0; li < nl; ++li) {
+        int j = lm[li]; float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+        dot *= scale; if (dot > m) m = dot; _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
+      }
+      float denom = 0.f;
+      for (int li = 0; li < nl; ++li) {
+        int j = lm[li]; float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+        float w = expf(dot * scale - m); denom += w;
+        for (int64_t d = 0; d < D; ++d)
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+        _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+    free(lm);
+  }
+}
+
 static inline int64_t offset_bhld(int64_t b, int64_t h, int64_t l, int64_t d,
                                   int64_t B, int64_t H, int64_t L, int64_t D) {
   (void)B;
@@ -262,14 +302,16 @@ void sattn_rvv_sliding_global(
     sattn_params_t params) {
   const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
   const int window = params.window_size;
+  const int step = (params.dilation > 0) ? params.dilation : 1;
+  const int wrap = (params.wrap != 0);
   const float scale = 1.0f / sqrtf((float)D);
 
   for (int64_t b = 0; b < B; ++b) {
     for (int64_t h = 0; h < H; ++h) {
         for (int64_t i = 0; i < L; ++i) {
-        const int64_t j_left = i - window > 0 ? i - window : 0;
-        const int64_t j_right = i + window + 1 < L ? i + window + 1 : L;
-        const int span = (int)(j_right - j_left);
+        const int64_t j_left = i - (int64_t)window * step > 0 ? i - (int64_t)window * step : 0;
+        const int64_t j_right = i + (int64_t)window * step + 1 < L ? i + (int64_t)window * step + 1 : L;
+        const int span = wrap ? (2*window + 1) : (int)((j_right - j_left + (step - 1)) / step);
         // compute scores over [j_left, j_right)
         // store in stack buffer if small; fallback alloc if large
         // conservative simple path
@@ -279,7 +321,31 @@ void sattn_rvv_sliding_global(
         if (span <= 0) continue;
         // For simplicity, compute softmax in two passes without extra alloc
         float m = -INFINITY;
-        for (int64_t j = j_left; j < j_right; ++j) {
+        if (wrap) {
+          for (int k = -window; k <= window; ++k) {
+            int64_t j = (int64_t)i + (int64_t)k * step;
+            j %= L; if (j < 0) j += L;
+            float dot = 0.f;
+#ifdef __riscv_vector
+            dot = dot_f32_rvv(
+                &Q[offset_bhld(b, h, i, 0, B, H, L, D)],
+                &K[offset_bhld(b, h, j, 0, B, H, L, D)],
+                D);
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; // Q and K reads
+            _rvv_ctrs.mac += (uint64_t)D;                    // D FMAs
+#else
+            for (int64_t d = 0; d < D; ++d) {
+              float qd = Q[offset_bhld(b, h, i, d, B, H, L, D)];
+              float kd = K[offset_bhld(b, h, j, d, B, H, L, D)];
+              dot += qd * kd;
+            }
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
+#endif
+            dot *= scale;
+            if (dot > m) m = dot;
+          }
+        } else {
+        for (int64_t j = j_left; j < j_right; j += step) {
           float dot = 0.f;
 #ifdef __riscv_vector
           dot = dot_f32_rvv(
@@ -299,8 +365,41 @@ void sattn_rvv_sliding_global(
           dot *= scale;
           if (dot > m) m = dot;
         }
+        }
         float denom = 0.f;
-        for (int64_t j = j_left; j < j_right; ++j) {
+        if (wrap) {
+          for (int k = -window; k <= window; ++k) {
+            int64_t j = (int64_t)i + (int64_t)k * step;
+            j %= L; if (j < 0) j += L;
+            float dot = 0.f;
+#ifdef __riscv_vector
+            dot = dot_f32_rvv(
+                &Q[offset_bhld(b, h, i, 0, B, H, L, D)],
+                &K[offset_bhld(b, h, j, 0, B, H, L, D)],
+                D);
+#else
+            for (int64_t d = 0; d < D; ++d) {
+              float qd = Q[offset_bhld(b, h, i, d, B, H, L, D)];
+              float kd = K[offset_bhld(b, h, j, d, B, H, L, D)];
+              dot += qd * kd;
+            }
+#endif
+            float w = expf(dot * scale - m);
+            denom += w;
+#ifdef __riscv_vector
+            axpy_f32_rvv(w, &V[offset_bhld(b, h, j, 0, B, H, L, D)],
+                         &O[offset_bhld(b, h, i, 0, B, H, L, D)], D);
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+#else
+            for (int64_t d = 0; d < D; ++d) {
+              float vd = V[offset_bhld(b, h, j, d, B, H, L, D)];
+              O[offset_bhld(b, h, i, d, B, H, L, D)] += w * vd;
+            }
+            _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+#endif
+          }
+        } else {
+        for (int64_t j = j_left; j < j_right; j += step) {
           float dot = 0.f;
 #ifdef __riscv_vector
           dot = dot_f32_rvv(
@@ -327,6 +426,7 @@ void sattn_rvv_sliding_global(
           }
           _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
 #endif
+        }
         }
         float inv = 1.f / (denom + 1e-12f);
 #ifdef __riscv_vector
