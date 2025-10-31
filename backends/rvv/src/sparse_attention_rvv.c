@@ -10,6 +10,40 @@
 // Forward decls used by early helper implementations
 static inline int64_t offset_bhld(int64_t b, int64_t h, int64_t l, int64_t d,
                                   int64_t B, int64_t H, int64_t L, int64_t D);
+
+// ------------------------
+// Quantization helpers
+// ------------------------
+static inline unsigned short float_to_bf16_u16(float x) {
+  union { float f; unsigned int u; } v = { .f = x };
+  // round to nearest even on lower 16 bits
+  unsigned int lsb = (v.u >> 16) & 1u;
+  unsigned int rounding_bias = 0x7FFFu + lsb;
+  unsigned int rounded = v.u + rounding_bias;
+  return (unsigned short)(rounded >> 16);
+}
+static inline float bf16_u16_to_float(unsigned short h) {
+  union { unsigned int u; float f; } v = { .u = ((unsigned int)h) << 16 };
+  return v.f;
+}
+static inline signed char f32_to_i8_symmetric(float x, float scale) {
+  if (scale <= 0.f) scale = 1.f;
+  float q = x / scale;
+  if (q > 127.f) q = 127.f; else if (q < -127.f) q = -127.f;
+  int iq = (int)lrintf(q);
+  if (iq > 127) iq = 127; if (iq < -127) iq = -127;
+  return (signed char)iq;
+}
+static inline float dequant_i8(int v, float scale) { return scale * (float)v; }
+static inline signed char f32_to_i4_symmetric(float x, float scale) {
+  if (scale <= 0.f) scale = 1.f;
+  float q = x / scale;
+  if (q > 7.f) q = 7.f; else if (q < -8.f) q = -8.f;
+  int iq = (int)lrintf(q);
+  if (iq > 7) iq = 7; if (iq < -8) iq = -8;
+  return (signed char)iq; // we will use only low 4 bits signed range [-8,7]
+}
+static inline float dequant_i4(int v, float scale) { return scale * (float)v; }
 #ifdef __riscv_vector
 static inline float dot_f32_rvv(const float* a, const float* b, int64_t n);
 static inline void axpy_f32_rvv(float alpha, const float* x, float* y, int64_t n);
@@ -310,6 +344,162 @@ void sattn_rvv_sliding_global(
   }
 }
 
+void sattn_rvv_sliding_global_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int window = params.window_size;
+  const float scale = 1.0f / sqrtf((float)D);
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      int64_t jl = i - window > 0 ? i - window : 0;
+      int64_t jr = i + window + 1 < L ? i + window + 1 : L;
+      if (jr <= jl) continue;
+      float m = -INFINITY;
+      for (int64_t j = jl; j < jr; ++j) {
+        float dot = 0.f;
+        for (int64_t d = 0; d < D; ++d) {
+          unsigned short qh = float_to_bf16_u16(Q[offset_bhld(b,h,i,d,B,H,L,D)]);
+          unsigned short kh = float_to_bf16_u16(K[offset_bhld(b,h,j,d,B,H,L,D)]);
+          dot += bf16_u16_to_float(qh) * bf16_u16_to_float(kh);
+        }
+        dot *= scale; if (dot > m) m = dot;
+      }
+      float denom = 0.f;
+      for (int64_t j = jl; j < jr; ++j) {
+        float dot = 0.f;
+        for (int64_t d = 0; d < D; ++d) {
+          unsigned short qh = float_to_bf16_u16(Q[offset_bhld(b,h,i,d,B,H,L,D)]);
+          unsigned short kh = float_to_bf16_u16(K[offset_bhld(b,h,j,d,B,H,L,D)]);
+          dot += bf16_u16_to_float(qh) * bf16_u16_to_float(kh);
+        }
+        float w = expf(dot * scale - m); denom += w;
+        for (int64_t d = 0; d < D; ++d) {
+          unsigned short vh = float_to_bf16_u16(V[offset_bhld(b,h,j,d,B,H,L,D)]);
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * bf16_u16_to_float(vh);
+        }
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+}
+
+void sattn_rvv_sliding_global_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int window = params.window_size;
+  const float attn_scale = 1.0f / sqrtf((float)D);
+  const float s_q = scale_q > 0.f ? scale_q : 0.05f;
+  const float s_k = scale_k > 0.f ? scale_k : 0.05f;
+  const float s_v = scale_v > 0.f ? scale_v : 0.05f;
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      int64_t jl = i - window > 0 ? i - window : 0;
+      int64_t jr = i + window + 1 < L ? i + window + 1 : L;
+      if (jr <= jl) continue;
+      float m = -INFINITY;
+      for (int64_t j = jl; j < jr; ++j) {
+        int dot_i32 = 0;
+        for (int64_t d = 0; d < D; ++d) {
+          signed char qi = f32_to_i8_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          signed char ki = f32_to_i8_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += (int)qi * (int)ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32;
+        dot *= attn_scale; if (dot > m) m = dot;
+      }
+      float denom = 0.f;
+      for (int64_t j = jl; j < jr; ++j) {
+        int dot_i32 = 0;
+        for (int64_t d = 0; d < D; ++d) {
+          signed char qi = f32_to_i8_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          signed char ki = f32_to_i8_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += (int)qi * (int)ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32;
+        float w = expf(dot * attn_scale - m); denom += w;
+        for (int64_t d = 0; d < D; ++d) {
+          signed char vi = f32_to_i8_symmetric(V[offset_bhld(b,h,j,d,B,H,L,D)], s_v);
+          float v = dequant_i8((int)vi, s_v);
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v;
+        }
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+}
+
+void sattn_rvv_sliding_global_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int window = params.window_size;
+  const float attn_scale = 1.0f / sqrtf((float)D);
+  const float s_q = scale_q > 0.f ? scale_q : 0.1f;
+  const float s_k = scale_k > 0.f ? scale_k : 0.1f;
+  const float s_v = scale_v > 0.f ? scale_v : 0.1f;
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      int64_t jl = i - window > 0 ? i - window : 0;
+      int64_t jr = i + window + 1 < L ? i + window + 1 : L;
+      if (jr <= jl) continue;
+      float m = -INFINITY;
+      for (int64_t j = jl; j < jr; ++j) {
+        int dot_i32 = 0;
+        for (int64_t d = 0; d < D; ++d) {
+          int qi = (int)f32_to_i4_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          int ki = (int)f32_to_i4_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += qi * ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32;
+        dot *= attn_scale; if (dot > m) m = dot;
+      }
+      float denom = 0.f;
+      for (int64_t j = jl; j < jr; ++j) {
+        int dot_i32 = 0;
+        for (int64_t d = 0; d < D; ++d) {
+          int qi = (int)f32_to_i4_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          int ki = (int)f32_to_i4_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += qi * ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32;
+        float w = expf(dot * attn_scale - m); denom += w;
+        for (int64_t d = 0; d < D; ++d) {
+          int vi = (int)f32_to_i4_symmetric(V[offset_bhld(b,h,j,d,B,H,L,D)], s_v);
+          float v = dequant_i4(vi, s_v);
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v;
+        }
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+}
+
 void sattn_rvv_sliding_global_tiled(
     const float* Q,
     const float* K,
@@ -498,6 +688,174 @@ void sattn_rvv_block_topk(
 
   free(block_idx);
   free(block_scores);
+}
+
+void sattn_rvv_block_topk_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int block = params.block_size > 0 ? params.block_size : 64;
+  const int64_t num_blocks = (L + block - 1) / block;
+  int k_blocks = (int)((float)num_blocks * (params.keep_ratio > 0.f ? params.keep_ratio : 0.12f) + 0.999f);
+  if (k_blocks < 1) k_blocks = 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  int* block_idx = (int*)malloc((size_t)num_blocks * sizeof(int));
+  float* block_scores = (float*)malloc((size_t)num_blocks * sizeof(float));
+  if (!block_idx || !block_scores) { if (block_idx) free(block_idx); if (block_scores) free(block_scores); return; }
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      for (int64_t nb = 0; nb < num_blocks; ++nb) {
+        int64_t s = nb * block; int64_t e = s + block; if (e > L) e = L;
+        float dot = 0.f; int64_t cnt = (int64_t)(e - s);
+        for (int64_t j = s; j < e; ++j) for (int64_t d = 0; d < D; ++d) {
+          float qf = bf16_u16_to_float(float_to_bf16_u16(Q[offset_bhld(b,h,i,d,B,H,L,D)]));
+          float kf = bf16_u16_to_float(float_to_bf16_u16(K[offset_bhld(b,h,j,d,B,H,L,D)]));
+          dot += qf * kf;
+        }
+        block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
+      }
+      for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
+        if (block_scores[y] > block_scores[x]) { float ts = block_scores[x]; block_scores[x] = block_scores[y]; block_scores[y] = ts; int ti = block_idx[x]; block_idx[x] = block_idx[y]; block_idx[y] = ti; }
+      float denom = 0.f;
+      const int gtok = params.global_tokens > 0 ? (params.global_tokens < (int)L ? params.global_tokens : (int)L) : 0;
+      int sel_cap = (int)(k_blocks * block + gtok); int sel_cnt = 0; int* sel_idx = (int*)malloc((size_t)sel_cap * sizeof(int));
+      for (int j = 0; j < gtok && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = j;
+      for (int kb = 0; kb < k_blocks && kb < num_blocks; ++kb) { int nb = block_idx[kb]; int64_t s = (int64_t)nb * block; int64_t e = s + block; if (e > L) e = L; for (int64_t j = s; j < e && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = (int)j; }
+      for (int t = 0; t < sel_cnt; ++t) {
+        int j = sel_idx[t]; float dot = 0.f;
+        for (int64_t d = 0; d < D; ++d) {
+          float qf = bf16_u16_to_float(float_to_bf16_u16(Q[offset_bhld(b,h,i,d,B,H,L,D)]));
+          float kf = bf16_u16_to_float(float_to_bf16_u16(K[offset_bhld(b,h,j,d,B,H,L,D)]));
+          dot += qf * kf;
+        }
+        float w = expf(dot * scale); denom += w;
+        for (int64_t d = 0; d < D; ++d) {
+          float vf = bf16_u16_to_float(float_to_bf16_u16(V[offset_bhld(b,h,j,d,B,H,L,D)]));
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * vf;
+        }
+      }
+      free(sel_idx);
+      float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+  free(block_idx); free(block_scores);
+}
+
+void sattn_rvv_block_topk_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int block = params.block_size > 0 ? params.block_size : 64;
+  const int64_t num_blocks = (L + block - 1) / block;
+  int k_blocks = (int)((float)num_blocks * (params.keep_ratio > 0.f ? params.keep_ratio : 0.12f) + 0.999f);
+  if (k_blocks < 1) k_blocks = 1;
+  const float sc = 1.0f / sqrtf((float)D);
+  const float s_q = scale_q > 0.f ? scale_q : 0.05f;
+  const float s_k = scale_k > 0.f ? scale_k : 0.05f;
+  const float s_v = scale_v > 0.f ? scale_v : 0.05f;
+  int* block_idx = (int*)malloc((size_t)num_blocks * sizeof(int)); float* block_scores = (float*)malloc((size_t)num_blocks * sizeof(float));
+  if (!block_idx || !block_scores) { if (block_idx) free(block_idx); if (block_scores) free(block_scores); return; }
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      for (int64_t nb = 0; nb < num_blocks; ++nb) {
+        int64_t s = nb * block; int64_t e = s + block; if (e > L) e = L; int64_t cnt = (int64_t)(e - s); int dot_i32 = 0;
+        for (int64_t j = s; j < e; ++j) for (int64_t d = 0; d < D; ++d) {
+          int qi = (int)f32_to_i8_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          int ki = (int)f32_to_i8_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += qi * ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32; block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
+      }
+      for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
+        if (block_scores[y] > block_scores[x]) { float ts = block_scores[x]; block_scores[x] = block_scores[y]; block_scores[y] = ts; int ti = block_idx[x]; block_idx[x] = block_idx[y]; block_idx[y] = ti; }
+      float denom = 0.f; const int gtok = params.global_tokens > 0 ? (params.global_tokens < (int)L ? params.global_tokens : (int)L) : 0;
+      int sel_cap = (int)(k_blocks * block + gtok); int sel_cnt = 0; int* sel_idx = (int*)malloc((size_t)sel_cap * sizeof(int));
+      for (int j = 0; j < gtok && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = j;
+      for (int kb = 0; kb < k_blocks && kb < num_blocks; ++kb) { int nb = block_idx[kb]; int64_t s = (int64_t)nb * block; int64_t e = s + block; if (e > L) e = L; for (int64_t j = s; j < e && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = (int)j; }
+      for (int t = 0; t < sel_cnt; ++t) {
+        int j = sel_idx[t]; int dot_i32 = 0;
+        for (int64_t d = 0; d < D; ++d) {
+          int qi = (int)f32_to_i8_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          int ki = (int)f32_to_i8_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += qi * ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32; float w = expf(dot * sc); denom += w;
+        for (int64_t d = 0; d < D; ++d) { int vi = (int)f32_to_i8_symmetric(V[offset_bhld(b,h,j,d,B,H,L,D)], s_v); float v = dequant_i8(vi, s_v); O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v; }
+      }
+      free(sel_idx);
+      float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+  free(block_idx); free(block_scores);
+}
+
+void sattn_rvv_block_topk_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int block = params.block_size > 0 ? params.block_size : 64;
+  const int64_t num_blocks = (L + block - 1) / block;
+  int k_blocks = (int)((float)num_blocks * (params.keep_ratio > 0.f ? params.keep_ratio : 0.12f) + 0.999f);
+  if (k_blocks < 1) k_blocks = 1;
+  const float sc = 1.0f / sqrtf((float)D);
+  const float s_q = scale_q > 0.f ? scale_q : 0.1f;
+  const float s_k = scale_k > 0.f ? scale_k : 0.1f;
+  const float s_v = scale_v > 0.f ? scale_v : 0.1f;
+  int* block_idx = (int*)malloc((size_t)num_blocks * sizeof(int)); float* block_scores = (float*)malloc((size_t)num_blocks * sizeof(float));
+  if (!block_idx || !block_scores) { if (block_idx) free(block_idx); if (block_scores) free(block_scores); return; }
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      for (int64_t nb = 0; nb < num_blocks; ++nb) {
+        int64_t s = nb * block; int64_t e = s + block; if (e > L) e = L; int64_t cnt = (int64_t)(e - s); int dot_i32 = 0;
+        for (int64_t j = s; j < e; ++j) for (int64_t d = 0; d < D; ++d) {
+          int qi = (int)f32_to_i4_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          int ki = (int)f32_to_i4_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += qi * ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32; block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
+      }
+      for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
+        if (block_scores[y] > block_scores[x]) { float ts = block_scores[x]; block_scores[x] = block_scores[y]; block_scores[y] = ts; int ti = block_idx[x]; block_idx[x] = block_idx[y]; block_idx[y] = ti; }
+      float denom = 0.f; const int gtok = params.global_tokens > 0 ? (params.global_tokens < (int)L ? params.global_tokens : (int)L) : 0;
+      int sel_cap = (int)(k_blocks * block + gtok); int sel_cnt = 0; int* sel_idx = (int*)malloc((size_t)sel_cap * sizeof(int));
+      for (int j = 0; j < gtok && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = j;
+      for (int kb = 0; kb < k_blocks && kb < num_blocks; ++kb) { int nb = block_idx[kb]; int64_t s = (int64_t)nb * block; int64_t e = s + block; if (e > L) e = L; for (int64_t j = s; j < e && sel_cnt < sel_cap; ++j) sel_idx[sel_cnt++] = (int)j; }
+      for (int t = 0; t < sel_cnt; ++t) {
+        int j = sel_idx[t]; int dot_i32 = 0;
+        for (int64_t d = 0; d < D; ++d) {
+          int qi = (int)f32_to_i4_symmetric(Q[offset_bhld(b,h,i,d,B,H,L,D)], s_q);
+          int ki = (int)f32_to_i4_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
+          dot_i32 += qi * ki;
+        }
+        float dot = (s_q * s_k) * (float)dot_i32; float w = expf(dot * sc); denom += w;
+        for (int64_t d = 0; d < D; ++d) { int vi = (int)f32_to_i4_symmetric(V[offset_bhld(b,h,j,d,B,H,L,D)], s_v); float v = dequant_i4(vi, s_v); O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v; }
+      }
+      free(sel_idx);
+      float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+  free(block_idx); free(block_scores);
 }
 
 void sattn_rvv_block_topk_tiled(

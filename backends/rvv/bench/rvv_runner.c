@@ -13,15 +13,24 @@ static int args(int argc, char** argv, const char* k, const char** out) {
 
 int main(int argc, char** argv) {
   const char* spec = "sliding_window";
+  const char* precision = "fp32"; // fp32 | bf16 | i8 | i4
+  float scale_q = 0.05f, scale_k = 0.05f, scale_v = 0.05f;
   long B=1,H=1,L=128,D=32, window=8, block_size=64, global_tokens=0, nm_n=0, nm_m=0, lsh_buckets=0, tile_rows=0;
   int autotune = 0;
   long keep_ratio_x1000 = 120; // 0.12
   (void)args(argc, argv, "--spec", &spec);
+  (void)args(argc, argv, "--precision", &precision);
   argi(argc, argv, "--B", &B); argi(argc, argv, "--H", &H); argi(argc, argv, "--L", &L); argi(argc, argv, "--D", &D);
   argi(argc, argv, "--window", &window); argi(argc, argv, "--block_size", &block_size);
   argi(argc, argv, "--global_tokens", &global_tokens); argi(argc, argv, "--nm_n", &nm_n); argi(argc, argv, "--nm_m", &nm_m);
   argi(argc, argv, "--lsh_buckets", &lsh_buckets); argi(argc, argv, "--keep_x1000", &keep_ratio_x1000);
   argi(argc, argv, "--tile_rows", &tile_rows);
+  {
+    long tmp;
+    if (argi(argc, argv, "--scale_q_x1000", &tmp)) scale_q = (float)tmp / 1000.0f;
+    if (argi(argc, argv, "--scale_k_x1000", &tmp)) scale_k = (float)tmp / 1000.0f;
+    if (argi(argc, argv, "--scale_v_x1000", &tmp)) scale_v = (float)tmp / 1000.0f;
+  }
   for (int i=1;i<argc;++i) if (strcmp(argv[i], "--autotune")==0) autotune = 1;
   sattn_shape_t s = { .B = B, .H = H, .L = L, .D = D };
   size_t elems = (size_t)B * H * L * D;
@@ -45,10 +54,15 @@ int main(int argc, char** argv) {
     free(Q); free(K); free(V); free(O); return 0;
   } else if (strcmp(spec, "sliding_window")==0) {
     sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size };
-    if (tile_rows > 1) {
-      sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,(int)tile_rows);
+    if (strcmp(precision, "bf16")==0) {
+      sattn_rvv_sliding_global_bf16(Q,K,V,O,s,p);
+    } else if (strcmp(precision, "i8")==0) {
+      sattn_rvv_sliding_global_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else if (strcmp(precision, "i4")==0) {
+      sattn_rvv_sliding_global_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
     } else {
-      sattn_rvv_sliding_global(Q,K,V,O,s,p);
+      if (tile_rows > 1) sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,(int)tile_rows);
+      else sattn_rvv_sliding_global(Q,K,V,O,s,p);
     }
   } else if ((strcmp(spec, "block_local_global")==0 || strcmp(spec, "bsr")==0) && autotune) {
     int candidates[] = {1,2,4,8}; size_t nc = sizeof(candidates)/sizeof(candidates[0]);
@@ -66,13 +80,29 @@ int main(int argc, char** argv) {
     free(Q); free(K); free(V); free(O); return 0;
   } else if (strcmp(spec, "block_local_global")==0 || strcmp(spec, "bsr")==0) {
     sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens };
-    sattn_rvv_block_topk(Q,K,V,O,s,p);
+    if (strcmp(precision, "bf16")==0) {
+      sattn_rvv_block_topk_bf16(Q,K,V,O,s,p);
+    } else if (strcmp(precision, "i8")==0) {
+      sattn_rvv_block_topk_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else if (strcmp(precision, "i4")==0) {
+      sattn_rvv_block_topk_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else {
+      sattn_rvv_block_topk(Q,K,V,O,s,p);
+    }
   } else if (strcmp(spec, "nm_structured")==0) {
     sattn_nm_params_t p = { .n = (int)nm_n, .m = (int)nm_m };
     sattn_rvv_nm_structured(Q,K,V,O,s,p);
   } else if (strcmp(spec, "topk_per_query")==0) {
     sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=0 };
-    sattn_rvv_block_topk(Q,K,V,O,s,p);
+    if (strcmp(precision, "bf16")==0) {
+      sattn_rvv_block_topk_bf16(Q,K,V,O,s,p);
+    } else if (strcmp(precision, "i8")==0) {
+      sattn_rvv_block_topk_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else if (strcmp(precision, "i4")==0) {
+      sattn_rvv_block_topk_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else {
+      sattn_rvv_block_topk(Q,K,V,O,s,p);
+    }
   } else if (strcmp(spec, "lsh")==0) {
     sattn_lsh_params_t p = { .buckets = (int)lsh_buckets };
     sattn_rvv_lsh(Q,K,V,O,s,p);

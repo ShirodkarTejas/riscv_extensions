@@ -43,6 +43,23 @@ Run the benches on Spike/QEMU or your RVV board:
 ./sattn_rvv_runner --spec block_local_global --L 512 --D 64 --block_size 64 --keep_x1000 120 --autotune
 ```
 
+### Precision and scales
+
+Select precision and optional per-tensor scales via runner flags:
+
+```
+# bfloat16
+./sattn_rvv_runner --spec sliding_window --L 128 --D 32 --window 8 --precision bf16
+
+# int8 with symmetric scales (x1000)
+./sattn_rvv_runner --spec sliding_window --L 128 --D 32 --window 8 --precision i8 \
+  --scale_q_x1000 50 --scale_k_x1000 50 --scale_v_x1000 50
+
+# int4 with symmetric scales (x1000)
+./sattn_rvv_runner --spec block_local_global --L 128 --D 32 --block_size 16 --keep_x1000 120 \
+  --precision i4 --scale_q_x1000 125 --scale_k_x1000 125 --scale_v_x1000 125
+```
+
 Output:
 
 ```

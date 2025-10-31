@@ -16,6 +16,9 @@ typedef struct {
   int block_size;      // token block size (for compatibility)
 } sattn_params_t;
 
+// Forward declare block_topk params to allow prototypes before its full definition.
+typedef struct sattn_blocktopk_params_t sattn_blocktopk_params_t;
+
 // Sliding-window sparse attention baseline on CPU/RVV. All tensors are row-major
 // with shape [B, H, L, D] and contiguous strides.
 // Q,K,V,O point to float buffers (compute in fp32 baseline).
@@ -26,6 +29,68 @@ void sattn_rvv_sliding_global(
     float* O,
     sattn_shape_t shape,
     sattn_params_t params);
+
+// Quantized variants for sliding_window
+void sattn_rvv_sliding_global_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params);
+
+void sattn_rvv_sliding_global_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
+
+void sattn_rvv_sliding_global_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
+
+// Quantized variants for block_local_global / block_topk
+void sattn_rvv_block_topk_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params);
+
+void sattn_rvv_block_topk_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
+
+void sattn_rvv_block_topk_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
 
 // Tiled variant of sliding_window to improve locality for multiple query rows
 void sattn_rvv_sliding_global_tiled(
@@ -51,7 +116,7 @@ void sattn_rvv_counters_reset();
 void sattn_rvv_counters_get(sattn_rvv_counters_t* out);
 
 // Block-topk sparse attention baseline (selection scalar, math vectorized where possible)
-typedef struct {
+typedef struct sattn_blocktopk_params_t {
   int block_size;   // tokens per block
   float keep_ratio; // fraction of blocks kept per row
   int global_tokens;

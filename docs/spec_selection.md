@@ -48,6 +48,36 @@ build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect -pa
 # Output: spec=sliding_window checksum=...
 ```
 
+### Precision and quantization (attribute-driven)
+
+You can select compute precision via attributes on `sattn.sparse_attention` (preferred) or `sattn.rvv_call`. Supported values and optional per-tensor scales:
+
+- `precision`: one of `"fp32"`, `"bf16"`, `"i8"`, `"i4"`
+- `scale_q`: float (optional; used for `i8`/`i4`), symmetric per-tensor
+- `scale_k`: float (optional; used for `i8`/`i4`), symmetric per-tensor
+- `scale_v`: float (optional; used for `i8`/`i4`), symmetric per-tensor
+
+Behavior:
+- If `precision` is omitted, defaults to `fp32`.
+- If `precision` is `i8`/`i4` and scales are omitted, reasonable defaults are used in the RVV kernels.
+- Attributes are preserved through lowering (`sattn.sparse_attention` → `sattn.rvv_call`), and the MLIR→RVV bridge forwards them to the RVV runner.
+
+Examples:
+
+Sliding window with bfloat16:
+```
+module {
+  "sattn.sparse_attention"() { precision = "bf16", window_size = 8 : i64, tile_D = 32 : i64, tile_S = 128 : i64 } : () -> ()
+}
+```
+
+Sliding window with int8 and explicit per-tensor scales:
+```
+module {
+  "sattn.sparse_attention"() { precision = "i8", scale_q = 0.05 : f32, scale_k = 0.05 : f32, scale_v = 0.05 : f32, window_size = 8 : i64, tile_D = 32 : i64, tile_S = 128 : i64 } : () -> ()
+}
+```
+
 - End-to-end compile+sim wrapper:
 ```
 /opt/venv/bin/python compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir

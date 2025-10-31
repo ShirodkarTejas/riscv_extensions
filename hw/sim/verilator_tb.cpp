@@ -86,6 +86,11 @@ int main(int argc, char** argv) {
   mmio_write(0x0040, BS);
   mmio_write(0x0048, KB);
   mmio_write(0x0050, S);
+  // Program per-spec MMIOs if present
+  if (NMN) mmio_write(0x00B8, NMN);
+  if (NMM) mmio_write(0x00C0, NMM);
+  if (LSHB) mmio_write(0x00C8, LSHB);
+  if (KEEP > 0.0f) mmio_write(0x00D0, (uint64_t)(KEEP * 1000.0f));
   mmio_write(0x0060, 0x14); // CMD_SPDOT_BSR
 
   // Poll for completion

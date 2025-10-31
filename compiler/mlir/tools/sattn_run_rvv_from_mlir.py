@@ -7,16 +7,13 @@ def run(cmd):
     return subprocess.check_output(cmd, text=True)
 
 
-def parse_attrs(txt):
-    m = re.search(r"sattn\.rvv_call[^\{]*\{([^}]*)\}", txt, re.MULTILINE | re.DOTALL)
-    if not m:
-        return {}
-    attrs = m.group(1)
+def _capture_attrs(block):
+    attrs = block
     def geti(name):
         mm = re.search(rf"{name}\s*=\s*([0-9]+)", attrs)
         return int(mm.group(1)) if mm else None
     def getf(name):
-        mm = re.search(rf"{name}\s*=\s*([0-9]+\.[0-9]+)", attrs)
+        mm = re.search(rf"{name}\s*=\s*([0-9]+(?:\.[0-9]+)?)", attrs)
         return float(mm.group(1)) if mm else None
     def gets(name):
         mm = re.search(rf"{name}\s*=\s*\"([^\"]+)\"", attrs)
@@ -32,14 +29,27 @@ def parse_attrs(txt):
         'nm_n': geti('nm_n') or 0,
         'nm_m': geti('nm_m') or 0,
         'lsh_buckets': geti('lsh_buckets') or 0,
+        'precision': gets('precision') or 'fp32',
+        'scale_q': getf('scale_q'),
+        'scale_k': getf('scale_k'),
+        'scale_v': getf('scale_v'),
     }
+
+def parse_attrs(txt):
+    m = re.search(r"sattn\.rvv_call[^\{]*\{([^}]*)\}", txt, re.MULTILINE | re.DOTALL)
+    if m:
+        return _capture_attrs(m.group(1))
+    m2 = re.search(r"sattn\.sparse_attention[^\{]*\{([^}]*)\}", txt, re.MULTILINE | re.DOTALL)
+    if m2:
+        return _capture_attrs(m2.group(1))
+    return {}
 
 
 def main():
     ap = argparse.ArgumentParser(description='Run RVV kernel selected by MLIR spec')
     ap.add_argument('--mlir', required=True)
     ap.add_argument('--sattn-opt', default='build/mlir/tools/sattn-opt/sattn-opt')
-    ap.add_argument('--runner', default='build/rvv/sattn_rvv_runner')
+    ap.add_argument('--runner', default='build/backends/rvv/sattn_rvv_runner')
     args = ap.parse_args()
 
     lowered = args.mlir + '.rvv.mlir'
@@ -62,6 +72,21 @@ def main():
            '--window', str(attrs['window_size']), '--block_size', str(attrs['block_size']),
            '--global_tokens', str(attrs['global_tokens']), '--nm_n', str(attrs['nm_n']), '--nm_m', str(attrs['nm_m']),
            '--lsh_buckets', str(attrs['lsh_buckets']), '--keep_x1000', str(keep_x1000)]
+    # Precision/scales
+    precision = attrs.get('precision') or 'fp32'
+    if precision:
+        cmd += ['--precision', precision]
+    for key, flag in [('scale_q','--scale_q_x1000'), ('scale_k','--scale_k_x1000'), ('scale_v','--scale_v_x1000')]:
+        if attrs.get(key) is not None:
+            cmd += [flag, str(int(round(attrs[key] * 1000.0)))]
+
+    # Fallback runner path if missing
+    runner_path = cmd[0]
+    if not os.path.exists(runner_path):
+        alt = 'build/rvv/sattn_rvv_runner'
+        if os.path.exists(alt):
+            cmd[0] = alt
+
     out = run(cmd)
     print(out)
 

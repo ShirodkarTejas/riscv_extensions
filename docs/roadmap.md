@@ -30,6 +30,7 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - RVV runner and MLIR bridge: `sattn_rvv_runner` dispatches kernels by spec; `sattn_run_rvv_from_mlir.py` lowers, parses `sattn.rvv_call`, and runs the runner; tests for SW/BLG/N:M/LSH pass.
  - RoCC counters refined: per-cycle gather/mac increments and DMA byte counting; pytest asserts non-zero counters.
  - RVV vectorization (expanded): tiled variants for `sliding_window`, `block_local_global` and `lsh`; runner prints counters and supports `--tile_rows`.
+ - Quantization (RVV): added bf16, int8, and int4 paths for `sliding_window` and `block_local_global`; runner supports `--precision` and `--scale_{q,k,v}_x1000`; MLIR bridge accepts `precision`/`scale_*` attributes and forwards to runner; tests added.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
@@ -42,6 +43,7 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 3) RVV performance path
    - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar — initial tiled variants done
    - Add simple autotune hooks in runner (tile_rows sweep); validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches
+   - Quantization calibration (optional): heuristics or lightweight calibration to choose scales per spec/dataset; document recommended defaults
 4) RoCC compute datapath
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
