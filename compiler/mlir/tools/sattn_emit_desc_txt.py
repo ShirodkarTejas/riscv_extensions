@@ -21,8 +21,11 @@ def parse_values(mlir_text: str):
             'global_tokens': geti('global_tokens', 0),
         }
     # Fallback from unlowered attrs
+    # Try to isolate the attribute dict first (more robust across formatting)
+    m2 = re.search(r"sattn\\.sparse_attention[^\{]*\{([^}]*)\}", mlir_text, re.MULTILINE | re.DOTALL)
+    scope = m2.group(1) if m2 else mlir_text
     def find_int(name, default):
-        mm = re.search(rf'{name}\\s*=\\s*([0-9]+)\\s*:\\s*i64', mlir_text)
+        mm = re.search(rf'{name}\\s*=\\s*([0-9]+)\\s*:\\s*i64', scope)
         return int(mm.group(1)) if mm else default
     S = find_int('tile_S', 16)
     BS = find_int('block_size', 4)

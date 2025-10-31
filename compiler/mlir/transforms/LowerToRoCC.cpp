@@ -38,6 +38,12 @@ struct LowerToRoCCPass : public PassWrapper<LowerToRoCCPass, OperationPass<Modul
         if (spec.getValue() == "block_local_global") {
           st.addAttribute("blg_enabled", BoolAttr::get(op->getContext(), true));
         }
+        if (spec.getValue() == "nm_structured") {
+          st.addAttribute("nm_enabled", BoolAttr::get(op->getContext(), true));
+        }
+        if (spec.getValue() == "topk_per_query") {
+          st.addAttribute("topk_enabled", BoolAttr::get(op->getContext(), true));
+        }
       }
       b.create(st);
       toErase.push_back(op);

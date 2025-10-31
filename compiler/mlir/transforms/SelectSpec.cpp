@@ -7,6 +7,8 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/Support/Process.h"
+#include <limits>
+#include <algorithm>
 
 using namespace mlir;
 
@@ -47,6 +49,17 @@ struct SelectSpecPass : public PassWrapper<SelectSpecPass, OperationPass<ModuleO
       // If global tokens requested, prefer block_local_global
       if (op->getAttr("global_tokens")) {
         op->setAttr("spec", StringAttr::get(ctx, "block_local_global"));
+        return;
+      }
+      // If N:M structured attributes are present, prefer nm_structured unless disabled
+      if (op->getAttr("nm_n") && op->getAttr("nm_m") &&
+          !llvm::sys::Process::GetEnv("SATTN_DISABLE_NM")) {
+        op->setAttr("spec", StringAttr::get(ctx, "nm_structured"));
+        return;
+      }
+      // If top-k attribute present, prefer topk_per_query unless disabled
+      if (op->getAttr("topk_k") && !llvm::sys::Process::GetEnv("SATTN_DISABLE_TOPK")) {
+        op->setAttr("spec", StringAttr::get(ctx, "topk_per_query"));
         return;
       }
       // Density models

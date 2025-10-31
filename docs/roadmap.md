@@ -24,14 +24,15 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - Selector extended: now considers keep_ratio, block_size cache-fit, and window span; added tests to validate selection flips.
  - New spec: added `block_local_global` selection when `global_tokens` is present; verified in both RoCC and RVV pipelines.
  - Selector overrides: `force_spec` attr and env vars (`SATTN_FORCE_SPEC`, `SATTN_DISABLE_SW`, `SATTN_DISABLE_BSR`); per-spec hooks add `blg_enabled` in lowered ops.
+ - Specs expanded: selector recognizes `nm_structured` (nm_n/nm_m) and `topk_per_query` (topk_k); lowerings add `nm_enabled`/`topk_enabled`.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
    - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
    - Hook indices/BSR masks from IR into emitters; unify text/JSON emission
 2) Multi-spec support and selection
-   - Extend `sattn.spec` choices (block_local_global done; N:M, topk_per_query, LSH pending); carry through to backends (BLG hooks in place)
-   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (BLG hook added; CPU ref pending)
+   - Extend `sattn.spec` choices (BLG, N:M, topk_per_query done; LSH pending); carry through to backends (hooks added for BLG/N:M/top-k)
+   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (hooks added; CPU ref pending)
    - Upgrade selector to a lightweight cost model (extended); add hardware probe; allow override (env/attr overrides added; probe flags minimal)
 3) RVV performance path
    - Complete segmented reductions and gather/scatter coverage across specs; vector dot and tile softmax

@@ -2,6 +2,8 @@
 
 ### How selection works
 - If `global_tokens > 0` is set on `sattn.sparse_attention`, the selector sets `spec = "block_local_global"`.
+- If `nm_n` and `nm_m` are set, the selector sets `spec = "nm_structured"` (unless `SATTN_DISABLE_NM`).
+- If `topk_k` is set, the selector sets `spec = "topk_per_query"` (unless `SATTN_DISABLE_TOPK`).
 - Else, the selector compares a simple cost model:
   - sliding_window uses `window_size`, `tile_S`, `tile_D` (and adds any `global_tokens` if present)
   - bsr uses `keep_ratio`, `block_size`, and `tile_M`, `tile_S`, `tile_D`
@@ -9,6 +11,8 @@
 
 ### Attributes the selector reads
 - `global_tokens: i64` → forces `block_local_global` if > 0
+- `nm_n: i64`, `nm_m: i64` → forces N:M structured selection
+- `topk_k: i64` → forces top-k per query selection
 - `window_size: i64` → influences sliding_window cost
 - `keep_ratio: f64`, `block_size: i64` → influence bsr cost
 - `tile_S: i64`, `tile_M: i64`, `tile_D: i64` → size hints for the model
@@ -45,8 +49,10 @@ This emits `indices.txt` and `indices.desc` (now includes `global_tokens` if pre
 ### Overrides and probe flags
 - Attribute override: set `spec = "..."` on `sattn.sparse_attention` (or `force_spec = "..."`) to bypass selection.
 - Env override: set `SATTN_FORCE_SPEC=bsr|sliding_window|block_local_global`.
-- Probe flags: `SATTN_DISABLE_SW=1` or `SATTN_DISABLE_BSR=1` to bias selection away from an unsupported pattern.
+- Probe flags: `SATTN_DISABLE_SW=1`, `SATTN_DISABLE_BSR=1`, `SATTN_DISABLE_NM=1`, `SATTN_DISABLE_TOPK=1` to bias selection away from an unsupported pattern.
 
 ### Per-spec hooks in lowering
 - When `spec = "block_local_global"`, lowerings add `blg_enabled = true` on `sattn.rocc_call`/`sattn.rvv_call` so backends can specialize.
+- When `spec = "nm_structured"`, lowerings add `nm_enabled = true`.
+- When `spec = "topk_per_query"`, lowerings add `topk_enabled = true`.
 
