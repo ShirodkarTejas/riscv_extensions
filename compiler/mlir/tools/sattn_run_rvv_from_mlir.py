@@ -32,6 +32,7 @@ def _capture_attrs(block):
         'nm_m': geti('nm_m') or 0,
         'lsh_buckets': geti('lsh_buckets') or 0,
         'num_landmarks': geti('num_landmarks') or 0,
+        'landmark_iters': geti('landmark_iters') or 0,
         'gqa_group_size': geti('gqa_group_size') or 1,
         'comp_block_size': geti('comp_block_size') or 0,
         'precision': gets('precision') or 'fp32',
@@ -95,8 +96,11 @@ def main():
                 cmd += ['--indices', idx_path]
         except Exception:
             pass
-    if attrs['spec'] == 'landmark' and attrs.get('num_landmarks'):
-        cmd += ['--landmarks', str(attrs['num_landmarks'])]
+    if attrs['spec'] == 'landmark':
+        if attrs.get('num_landmarks'):
+            cmd += ['--landmarks', str(attrs['num_landmarks'])]
+        if attrs.get('landmark_iters'):
+            cmd += ['--landmark_iters', str(attrs['landmark_iters'])]
     # Precision/scales
     precision = attrs.get('precision') or 'fp32'
     if precision:

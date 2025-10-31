@@ -144,10 +144,12 @@ These affect the sliding-window kernels in the RVV path. Ring mode samples `2*wi
 
 Attributes:
 - `num_landmarks: i64` — number of landmark tokens to attend over (evenly spaced, simple variant).
+- `landmark_iters: i64` — optional refinement iterations (k-means-lite) to improve landmark centroids.
 
 Runner flag:
 ```
 --landmarks N
+--landmark_iters I
 ```
 
 Current implementation uses evenly spaced representatives and attends over them (compressed attention). This provides a baseline for landmark-style sparsity.

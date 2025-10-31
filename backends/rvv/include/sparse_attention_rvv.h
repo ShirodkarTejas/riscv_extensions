@@ -185,6 +185,7 @@ void sattn_rvv_lsh(
 // Landmark attention: compress sequence to num_landmarks representatives and attend over them
 typedef struct {
   int num_landmarks;
+  int iters; // optional refinement iterations (k-means-lite)
 } sattn_landmark_params_t;
 
 void sattn_rvv_landmark(

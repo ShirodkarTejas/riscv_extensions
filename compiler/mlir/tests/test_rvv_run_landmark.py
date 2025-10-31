@@ -10,7 +10,7 @@ def run_mlir(src):
 
 
 def test_landmark_runs():
-    src = 'module {\n  "sattn.sparse_attention"() { spec = "landmark", num_landmarks = 16 : i64, tile_D = 32 : i64, tile_S = 128 : i64 } : () -> ()\n}\n'
+    src = 'module {\n  "sattn.sparse_attention"() { spec = "landmark", num_landmarks = 16 : i64, landmark_iters = 1 : i64, tile_D = 32 : i64, tile_S = 128 : i64 } : () -> ()\n}\n'
     out = run_mlir(src)
     assert 'spec=landmark' in out
 

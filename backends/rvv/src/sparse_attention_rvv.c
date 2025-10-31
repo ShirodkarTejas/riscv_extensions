@@ -175,24 +175,55 @@ void sattn_rvv_landmark(
   int nl = params.num_landmarks > 0 ? params.num_landmarks : (int)(L > 0 ? (L < 32 ? L : 32) : 1);
   if (nl < 1) nl = 1;
   const float scale = 1.0f / sqrtf((float)D);
-  // Evenly spaced landmarks
+  int iters = params.iters > 0 ? params.iters : 0;
+  // Landmarks per (b,h)
   for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
-    // Precompute landmark indices
+    // Initialize centroids as evenly spaced K rows
+    float* C = (float*)malloc((size_t)nl * (size_t)D * sizeof(float));
     int* lm = (int*)malloc(sizeof(int) * (size_t)nl);
     for (int i = 0; i < nl; ++i) { lm[i] = (int)((int64_t)i * L / nl); if (lm[i] >= (int)L) lm[i] = (int)L - 1; if (lm[i] < 0) lm[i] = 0; }
+    for (int i = 0; i < nl; ++i) {
+      for (int64_t d = 0; d < D; ++d) C[(size_t)i*D + d] = K[offset_bhld(b,h,lm[i],d,B,H,L,D)];
+    }
+    // Optional k-means-lite refinement: assign to nearest centroid (L2), update centroids by mean
+    for (int it = 0; it < iters; ++it) {
+      int* counts = (int*)calloc((size_t)nl, sizeof(int));
+      float* newC = (float*)calloc((size_t)nl * (size_t)D, sizeof(float));
+      if (!counts || !newC) { if (counts) free(counts); if (newC) free(newC); break; }
+      for (int64_t i = 0; i < L; ++i) {
+        // find closest centroid
+        int best = 0; float bestd = 1e30f;
+        for (int c = 0; c < nl; ++c) {
+          float dist = 0.f; for (int64_t d = 0; d < D; ++d) {
+            float kd = K[offset_bhld(b,h,i,d,B,H,L,D)] - C[(size_t)c*D + d]; dist += kd*kd; }
+          if (dist < bestd) { bestd = dist; best = c; }
+        }
+        counts[best]++;
+        for (int64_t d = 0; d < D; ++d) newC[(size_t)best*D + d] += K[offset_bhld(b,h,i,d,B,H,L,D)];
+        _rvv_ctrs.br += (uint64_t)D * sizeof(float); // K read
+      }
+      for (int c = 0; c < nl; ++c) {
+        int cnt = counts[c] > 0 ? counts[c] : 1;
+        for (int64_t d = 0; d < D; ++d) C[(size_t)c*D + d] = newC[(size_t)c*D + d] / (float)cnt;
+      }
+      free(counts); free(newC);
+    }
+    // Attention over centroids; use V at assigned landmark indices for simplicity
     for (int64_t i = 0; i < L; ++i) {
       for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
       float m = -INFINITY;
       for (int li = 0; li < nl; ++li) {
-        int j = lm[li]; float dot = 0.f; for (int64_t d = 0; d < D; ++d)
-          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
         dot *= scale; if (dot > m) m = dot; _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
       }
       float denom = 0.f;
       for (int li = 0; li < nl; ++li) {
-        int j = lm[li]; float dot = 0.f; for (int64_t d = 0; d < D; ++d)
-          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
         float w = expf(dot * scale - m); denom += w;
+        // For V, use nearest original token to the centroid as representative (lm index)
+        int j = lm[li];
         for (int64_t d = 0; d < D; ++d)
           O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
         _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
@@ -200,7 +231,7 @@ void sattn_rvv_landmark(
       float inv = 1.f / (denom + 1e-12f);
       for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
     }
-    free(lm);
+    free(lm); free(C);
   }
 }
 

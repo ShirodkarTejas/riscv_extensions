@@ -18,7 +18,7 @@ int main(int argc, char** argv) {
   long B=1,H=1,L=128,D=32, window=8, block_size=64, global_tokens=0, nm_n=0, nm_m=0, lsh_buckets=0, tile_rows=0;
   long dilation=1, wrap=0;
   long gqa_group_size=1, comp_block_size=0;
-  long landmarks=0;
+  long landmarks=0, landmark_iters=0;
   int autotune = 0;
   int calibrate = 0;
   const char* indices_path = NULL;
@@ -35,6 +35,7 @@ int main(int argc, char** argv) {
   argi(argc, argv, "--gqa_group_size", &gqa_group_size);
   argi(argc, argv, "--comp_block_size", &comp_block_size);
   argi(argc, argv, "--landmarks", &landmarks);
+  argi(argc, argv, "--landmark_iters", &landmark_iters);
   {
     long tmp;
     if (argi(argc, argv, "--scale_q_x1000", &tmp)) scale_q = (float)tmp / 1000.0f;
@@ -145,7 +146,7 @@ int main(int argc, char** argv) {
     sattn_lsh_params_t p = { .buckets = (int)lsh_buckets };
     sattn_rvv_lsh(Q,K,V,O,s,p);
   } else if (strcmp(spec, "landmark")==0) {
-    sattn_landmark_params_t p = { .num_landmarks = (int)(landmarks > 0 ? landmarks : 32) };
+    sattn_landmark_params_t p = { .num_landmarks = (int)(landmarks > 0 ? landmarks : 32), .iters = (int)landmark_iters };
     sattn_rvv_landmark(Q,K,V,O,s,p);
   } else if (strcmp(spec, "sliding_window_tiled")==0) {
     sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size, .dilation = (int)dilation, .wrap = (int)wrap };
