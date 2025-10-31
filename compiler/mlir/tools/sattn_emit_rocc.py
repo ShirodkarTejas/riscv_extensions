@@ -35,6 +35,26 @@ def parse_mlir(path: str):
     tile_M = get_attr('tile_M', int, 64)
     tile_D = get_attr('tile_D', int, 64)
     tile_S = get_attr('tile_S', int, 128)
+    # Parse indices array if present
+    indices = None
+    midx = re.search(r'indices\s*=\s*\[([^\]]*)\]', attrs)
+    if midx:
+        raw = midx.group(1)
+        nums = re.findall(r'-?\d+', raw)
+        try:
+            indices = [int(n) for n in nums]
+        except Exception:
+            indices = None
+    # Parse block_indices for block_topk
+    block_indices = None
+    midxb = re.search(r'block_indices\s*=\s*\[([^\]]*)\]', attrs)
+    if midxb:
+        raw = midxb.group(1)
+        nums = re.findall(r'-?\d+', raw)
+        try:
+            block_indices = [int(n) for n in nums]
+        except Exception:
+            block_indices = None
     return {
         'pattern': pattern,
         'block_size': block_size,
@@ -44,12 +64,34 @@ def parse_mlir(path: str):
         'tile_M': tile_M,
         'tile_D': tile_D,
         'tile_S': tile_S,
+        'indices': indices,
+        'block_indices': block_indices,
     }
 
 
 def make_indices(cfg):
-    # For demo: produce a simple 0..S-1 index list; real path would compute BSR indices
-    S = cfg.get('tile_S', 128)
+    """Produce a simple token index list consistent with pattern and tiles.
+    - sliding_global: windowed neighborhood (clipped), padded to S
+    - block_topk: select k_blocks*block_size tokens from the start (placeholder for true top-k)
+    """
+    S = int(cfg.get('tile_S', 128))
+    pat = cfg.get('pattern', 'sliding_global')
+    if pat == 'sliding_global':
+        w = int(cfg.get('window_size', 512))
+        count = min(S, max(1, 2 * w + 1))
+        base = list(range(count))
+        if len(base) < S:
+            base += list(range(count, S))
+        return base[:S]
+    if pat == 'block_topk':
+        bs = int(cfg.get('block_size', 64))
+        kr = float(cfg.get('keep_ratio', 0.12))
+        k_blocks = max(1, int((S + bs - 1) // bs * kr))
+        total = min(S, k_blocks * bs)
+        idx = list(range(total))
+        if len(idx) < S:
+            idx += list(range(total, S))
+        return idx[:S]
     return list(range(S))
 
 
@@ -60,7 +102,11 @@ def main():
     args = ap.parse_args()
 
     cfg = parse_mlir(args.in_mlir)
-    indices = make_indices(cfg)
+    # Prefer block_indices for block_topk; otherwise use token indices
+    if cfg.get('pattern') == 'block_topk' and cfg.get('block_indices'):
+        indices = cfg['block_indices']
+    else:
+        indices = cfg.get('indices') or make_indices(cfg)
     desc = {
         'm_rows': cfg['tile_M'],
         'head_dim_d': cfg['tile_D'],

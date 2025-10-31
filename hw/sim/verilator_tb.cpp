@@ -44,12 +44,12 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Program minimal descriptor
-  mmio_write(0x0030, 64); // m_rows
-  mmio_write(0x0038, 64); // head_dim_d
-  mmio_write(0x0040, 64); // block_size
-  mmio_write(0x0048, 8);  // k_blocks
-  mmio_write(0x0050, 512);// s_tokens
+  // Program descriptor (use smaller tile for check)
+  mmio_write(0x0030, 4);  // m_rows
+  mmio_write(0x0038, 16); // head_dim_d
+  mmio_write(0x0040, 4);  // block_size
+  mmio_write(0x0048, 4);  // k_blocks
+  mmio_write(0x0050, 16); // s_tokens
   mmio_write(0x0060, 0x14); // CMD_SPDOT_BSR
 
   // Poll for completion
@@ -64,6 +64,50 @@ int main(int argc, char** argv) {
   }
   uint64_t sum_lo = mmio_read(0x0068);
   printf("verilator_tb: completed in %d iterations, checksum=0x%llx\n", iters, (unsigned long long)sum_lo);
+
+  // Compute expected checksum to validate for small tiles
+  // Read back params
+  auto rd32 = [&](uint64_t addr){ return (uint32_t)mmio_read(addr); };
+  uint32_t M = rd32(0x0030), D = rd32(0x0038), BS = rd32(0x0040), S = rd32(0x0050);
+  // Load block indices from file if provided, otherwise ramp 0..K-1
+  int idx_count = (S + (BS ? BS : 1) - 1) / (BS ? BS : 1);
+  int *blk_ids = (int*)malloc(sizeof(int) * (idx_count > 0 ? idx_count : 1));
+  int blk_n = 0;
+  if (argc > 1) {
+    FILE* f = fopen(argv[1], "r");
+    if (f) {
+      char buf[128];
+      while (fgets(buf, sizeof(buf), f) && blk_n < idx_count) {
+        int val = atoi(buf);
+        blk_ids[blk_n++] = val;
+      }
+      fclose(f);
+    }
+  }
+  if (blk_n == 0) {
+    for (int i = 0; i < idx_count; ++i) blk_ids[i] = i;
+    blk_n = idx_count;
+  }
+
+  unsigned long long expected = 0ull;
+  for (uint32_t row = 0; row < M; ++row) {
+    for (uint32_t t = 0; t < S; ++t) {
+      uint32_t block_idx = (BS ? (t / BS) : 0);
+      uint32_t block_id = (block_idx < (uint32_t)blk_n) ? (uint32_t)blk_ids[block_idx] : block_idx;
+      uint32_t tok_in_block = (BS ? (t % BS) : 0);
+      (void)row; // rows are identical; we just multiply by M implicitly via loop
+      unsigned long long acc = 0ull;
+      for (uint32_t k = 0; k < D; ++k) {
+        uint32_t q = ((block_id & 0xFFFFu) << 16) | (k & 0xFFFFu);
+        uint32_t kv = (((block_id ^ 0x0f0fu) & 0xFFFFu) << 16) | (k & 0xFFFFu);
+        acc += (unsigned long long)q * (unsigned long long)kv;
+      }
+      expected += acc;
+    }
+  }
+  const char* verdict = (expected == sum_lo) ? "PASS" : "MISMATCH";
+  printf("expected=0x%llx -> %s\n", expected, verdict);
+  free(blk_ids);
   delete top;
   return 0;
 }

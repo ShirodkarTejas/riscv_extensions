@@ -51,4 +51,36 @@ Result:
   }];
 }
 
+def Sattn_RoCCCallOp : Op<Sattn_Dialect, "rocc_call", [NoSideEffect]> {
+  let summary = "Emit RoCC descriptor/call for sparse attention";
+  let description = [{
+The `sattn.rocc_call` op represents a lowered call to the RoCC accelerator.
+It carries attributes describing the descriptor:
+  - `m_rows`, `head_dim_d`, `s_tokens`, `block_size`
+  - `indices` (sliding) or `block_indices` (block_topk)
+  - `pattern`, `precision`
+This is a placeholder lowering target used for tooling/prototyping.
+}];
+
+  let arguments = (ins);
+  let results = (outs);
+
+  let assemblyFormat = [{attr-dict}];
+}
+
+def Sattn_RVVCallOp : Op<Sattn_Dialect, "rvv_call", [NoSideEffect]> {
+  let summary = "Emit RVV descriptor/call for sparse attention";
+  let description = [{
+The `sattn.rvv_call` op represents a lowered call/site for the RVV backend.
+It carries attributes describing the chosen tile sizes and pattern settings:
+  - `m_rows`, `head_dim_d`, `s_tokens`, `window_size`
+  - `pattern`, `precision`
+}];
+
+  let arguments = (ins);
+  let results = (outs);
+
+  let assemblyFormat = [{attr-dict}];
+}
+
 

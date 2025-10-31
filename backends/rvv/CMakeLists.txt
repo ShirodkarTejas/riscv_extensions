@@ -17,4 +17,7 @@ target_link_libraries(sattn_rvv_bench PRIVATE sattn_rvv)
 add_executable(sattn_rvv_bench_blocktopk bench/measure_cycles_blocktopk.c)
 target_link_libraries(sattn_rvv_bench_blocktopk PRIVATE sattn_rvv)
 
+add_executable(sattn_rvv_bench_cli bench/measure_cycles_cli.c)
+target_link_libraries(sattn_rvv_bench_cli PRIVATE sattn_rvv)
+
 

@@ -59,15 +59,15 @@ module spdot_bsr_core (
           // advance innermost dimension first
           if (k_dim + 1 < head_dim_d) begin
             k_dim <= k_dim + 32'd1;
-            q_raddr <= k_dim + 16'd1;
-            k_raddr <= k_dim + 16'd1;
+            q_raddr <= (j_tok * head_dim_d) + (k_dim + 32'd1);
+            k_raddr <= (j_tok * head_dim_d) + (k_dim + 32'd1);
           end else begin
             // dot for this token finished; fold into checksum, reset acc and move to next token
             checksum <= checksum + acc;
             acc <= 64'd0;
             k_dim <= 32'd0;
-            q_raddr <= 16'd0;
-            k_raddr <= 16'd0;
+            q_raddr <= (j_tok + 32'd1 < s_tokens) ? ((j_tok + 32'd1) * head_dim_d) : 16'd0;
+            k_raddr <= (j_tok + 32'd1 < s_tokens) ? ((j_tok + 32'd1) * head_dim_d) : 16'd0;
             if (j_tok + 1 < s_tokens) begin
               j_tok <= j_tok + 32'd1;
             end else begin

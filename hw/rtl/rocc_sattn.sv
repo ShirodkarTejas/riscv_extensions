@@ -35,6 +35,8 @@ module rocc_sattn #(
   localparam REG_SCALE_FP  = 16'h0058;
   localparam REG_CMD       = 16'h0060; // write to issue; read status
   localparam REG_ACC_SUM   = 16'h0068; // read checksum from core
+  localparam REG_SOF_SUM   = 16'h0080; // read softmax_fused checksum
+  localparam REG_SPM_SUM   = 16'h0088; // read spmm_bsr checksum
   localparam REG_IDX_WADDR = 16'h0070; // write index RAM address
   localparam REG_IDX_WDATA = 16'h0078; // write index RAM data (commit)
 
@@ -78,6 +80,8 @@ module rocc_sattn #(
   );
 
   logic [63:0] core_sum;
+  logic [63:0] sof_sum;
+  logic [63:0] spm_sum;
 
   // gather stub
   logic g_start, g_busy, g_done;
@@ -93,7 +97,7 @@ module rocc_sattn #(
   logic [15:0] idx_rd_addr;
   logic [15:0] idx_rd_data;
   gather2d_stub u_gather (
-    .clk(clk), .rstn(rstn), .start(g_start), .s_tokens(s_tokens[15:0]), .head_dim_d(head_dim_d[15:0]),
+    .clk(clk), .rstn(rstn), .start(g_start), .s_tokens(s_tokens[15:0]), .head_dim_d(head_dim_d[15:0]), .block_size(block_size[15:0]),
     .q_wen(q_wen), .q_waddr(q_waddr), .q_wdata(q_wdata),
     .k_wen(k_wen), .k_waddr(k_waddr), .k_wdata(k_wdata),
     .idx_rd_addr(idx_rd_addr), .idx_rd_data(idx_rd_data),
@@ -115,6 +119,20 @@ module rocc_sattn #(
   idx_ram #(.ADDR_WIDTH(16), .DATA_WIDTH(16)) u_idx (
     .clk(clk), .rstn(rstn), .wen(idx_wen), .waddr(idx_waddr), .wdata(idx_wdata),
     .raddr(idx_rd_addr), .rdata(idx_rd_data)
+  );
+
+  // softmax fused stub
+  logic sof_start, sof_busy, sof_done;
+  softmax_fused_stub u_soft (
+    .clk(clk), .rstn(rstn), .start(sof_start), .m_rows(m_rows[15:0]), .s_tokens(s_tokens[15:0]),
+    .busy(sof_busy), .done(sof_done), .checksum_out(sof_sum)
+  );
+
+  // spmm bsr stub
+  logic spm_start, spm_busy, spm_done;
+  spmm_bsr_stub u_spmm (
+    .clk(clk), .rstn(rstn), .start(spm_start), .m_rows(m_rows[15:0]), .s_tokens(s_tokens[15:0]), .head_dim_d(head_dim_d[15:0]),
+    .busy(spm_busy), .done(spm_done), .checksum_out(spm_sum)
   );
 
   // MMIO write
@@ -166,6 +184,8 @@ module rocc_sattn #(
       REG_SCALE_FP:  mmio_rdata = {32'd0, scale_fp_bits};
       REG_CMD:       mmio_rdata = {62'd0, (state==RUN), (state==DONE)}; // [1]=busy, [0]=done
       REG_ACC_SUM:   mmio_rdata = acc_sum;
+      REG_SOF_SUM:   mmio_rdata = sof_sum;
+      REG_SPM_SUM:   mmio_rdata = spm_sum;
       default:       mmio_rdata = '0;
     endcase
   end
@@ -203,11 +223,19 @@ module rocc_sattn #(
     state_n = state;
     core_start = 1'b0;
     g_start = 1'b0;
+    sof_start = 1'b0;
+    spm_start = 1'b0;
     unique case (state)
       IDLE: if (cmd_seen && cmd_reg != CMD_NOP) begin
                if (is_spdot) begin
                  state_n = GATHER;
                  g_start = 1'b1;
+               end else if (cmd_reg == CMD_SOFTMAX_FUS) begin
+                  state_n = RUN;
+                  sof_start = 1'b1;
+               end else if (cmd_reg == CMD_SPMM_BSR) begin
+                   state_n = RUN;
+                   spm_start = 1'b1;
                end else begin
                  state_n = RUN;
                end
@@ -221,6 +249,10 @@ module rocc_sattn #(
       RUN:   begin
                if (is_spdot) begin
                  if (core_done) state_n = DONE;
+               } else if (cmd_reg == CMD_SOFTMAX_FUS) begin
+                  if (sof_done) state_n = DONE;
+               } else if (cmd_reg == CMD_SPMM_BSR) begin
+                  if (spm_done) state_n = DONE;
                end else begin
                  if (run_cnt >= run_len) state_n = DONE; // variable latency placeholder
                end

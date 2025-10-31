@@ -16,17 +16,20 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - RVV: sliding-window inner math vectorized with RVV; block_topk baseline added; new cycles bench for both paths.
 - RoCC: added index RAM, dual scratchpads (Q/K), gather→scratchpad→MAC core with checksum; Verilator harness accepts index files.
 - MLIR: implemented initial passes (materialize-indices, tiling hints, fuse-softmax, lower-to-rvv/rocc), CMake integration, and `sattn-opt` tool; added `sattn_emit_rocc.py` to emit demo descriptors from MLIR.
+- MLIR lowering ops: added `sattn.rocc_call` and `sattn.rvv_call` and a lowering pass that replaces `sattn.sparse_attention` with these call sites to carry descriptors/tiles.
+- Sim verification: TB now computes an expected checksum and prints PASS/MISMATCH for small tiles; supports file-driven indices for BSR paths.
+- RVV runner: CLI bench `sattn_rvv_bench_cli` and `sattn_emit_rvv.py` to run RVV from MLIR; one-command RoCC pipeline `sattn_compile_and_sim.py`.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
-   - Implement actual MLIR passes (materialize-indices, tile, fuse-softmax, lower-to-{rvv,rocc})
-   - CMake build; register passes with `mlir-opt`; add tests
+   - Implement real tiling/vectorization/bufferization and backend-specific ops/calls (RVV vectors, RoCC descriptor emission); add pass tests
+   - Hook indices/BSR masks from IR into emitters; unify JSON/text emission paths
 2) RVV performance path
    - Replace scalar loops with RVV intrinsics (vector dot, segmented reductions, tile softmax)
    - Validate on Spike/QEMU-RVV or dev board; add counters for bandwidth/energy proxy
 3) RoCC compute datapath
    - Implement spdot_bsr pipeline with gather/DMA and MAC array; tile-local softmax_fused; spmm_bsr
-   - End-to-end compare to CPU reference; utilization and DMA efficiency profiling
+   - End-to-end compare to CPU reference (per-tile checks); utilization and DMA efficiency profiling
 4) Training + quantization
    - Backward pass for key paths; gradient tests; bf16/fp16 numerics
    - Int8 PTQ (KL/percentile calibration); optional int4 for V path
@@ -46,3 +49,5 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - RoCC: add simple address generation from index RAM (BSR decode stub) to drive gather addresses; keep checksum for verification.
 - MLIR: extend lowering to emit indices/CSR descriptors matching the RoCC programmer’s model; add a small test that round-trips MLIR → indices → sim.
 - RVV: implement segmented reductions and a gather/scatter helper for block_topk.
+- GPU: replace Torch prepass with Triton top-k selection.
+- Evaluation: add small end-to-end checks from MLIR configs for both RVV and RoCC flows.

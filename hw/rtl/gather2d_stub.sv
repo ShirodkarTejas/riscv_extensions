@@ -7,6 +7,7 @@ module gather2d_stub (
   input  logic        start,
   input  logic [15:0] s_tokens,
   input  logic [15:0] head_dim_d,
+  input  logic [15:0] block_size,
   // write ports to core scratchpads
   output logic        q_wen,
   output logic [15:0] q_waddr,
@@ -56,13 +57,21 @@ module gather2d_stub (
     // default no writes
     q_wen = 1'b0; q_waddr = '0; q_wdata = '0;
     k_wen = 1'b0; k_waddr = '0; k_wdata = '0;
-    idx_rd_addr = tok_cnt;
+    // Compute block index and token-in-block
+    logic [15:0] block_idx;
+    logic [15:0] tok_in_block;
+    block_idx = (block_size != 16'd0) ? (tok_cnt / block_size) : 16'd0;
+    tok_in_block = (block_size != 16'd0) ? (tok_cnt % block_size) : 16'd0;
+    idx_rd_addr = block_idx;
     unique case (state)
       IDLE: if (start) state_n = RUN;
       RUN:  begin
               // emit one write per cycle to both Q and K buffers at address waddr
-              q_wen = 1'b1; q_waddr = waddr; q_wdata = {idx_rd_data, waddr};
-              k_wen = 1'b1; k_waddr = waddr; k_wdata = {idx_rd_data ^ 16'h0f0f, waddr};
+              // address = (base_token * head_dim) + d, where base_token = block_id*block_size + tok_in_block
+              logic [31:0] base_token;
+              base_token = (idx_rd_data * block_size) + tok_in_block;
+              q_wen = 1'b1; q_waddr = (base_token * head_dim_d) + waddr; q_wdata = {idx_rd_data, waddr};
+              k_wen = 1'b1; k_waddr = (base_token * head_dim_d) + waddr; k_wdata = {idx_rd_data ^ 16'h0f0f, waddr};
               if (cnt >= s_tokens) state_n = DONE;
             end
       DONE: state_n = IDLE;

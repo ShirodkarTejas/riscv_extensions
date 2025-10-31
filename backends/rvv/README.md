@@ -19,6 +19,8 @@ Run the bench on Spike or your RVV board:
 # Spike/QEMU load paths differ; on a board just run the ELF
 ./sattn_rvv_bench
 ./sattn_rvv_bench_blocktopk
+# CLI bench for sliding_window (choose sizes)
+./sattn_rvv_bench_cli --B 1 --H 2 --L 1024 --D 64 --window 16
 ```
 
 Output:
