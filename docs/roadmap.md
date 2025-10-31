@@ -25,6 +25,7 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - New spec: added `block_local_global` selection when `global_tokens` is present; verified in both RoCC and RVV pipelines.
  - Selector overrides: `force_spec` attr and env vars (`SATTN_FORCE_SPEC`, `SATTN_DISABLE_SW`, `SATTN_DISABLE_BSR`); per-spec hooks add `blg_enabled` in lowered ops.
  - Specs expanded: selector recognizes `nm_structured` (nm_n/nm_m) and `topk_per_query` (topk_k); lowerings add `nm_enabled`/`topk_enabled`.
+ - LSH added: selector recognizes `lsh_buckets` → `spec = lsh`; lowerings add `lsh_enabled`.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration

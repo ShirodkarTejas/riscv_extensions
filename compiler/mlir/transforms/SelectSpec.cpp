@@ -62,6 +62,11 @@ struct SelectSpecPass : public PassWrapper<SelectSpecPass, OperationPass<ModuleO
         op->setAttr("spec", StringAttr::get(ctx, "topk_per_query"));
         return;
       }
+      // If LSH buckets present, prefer lsh unless disabled
+      if (op->getAttr("lsh_buckets") && !llvm::sys::Process::GetEnv("SATTN_DISABLE_LSH")) {
+        op->setAttr("spec", StringAttr::get(ctx, "lsh"));
+        return;
+      }
       // Density models
       double density_bsr = std::clamp(keep, 0.0, 1.0);
       double relSpan = (W > 0) ? double(2 * W + 1) / double(std::max<int64_t>(1, S)) : 1.0;

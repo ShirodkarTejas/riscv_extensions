@@ -55,6 +55,14 @@ void sattn_rvv_block_topk(
     sattn_shape_t shape,
     sattn_blocktopk_params_t params);
 
+// Segmented reductions: sum across contiguous segments of length seg_len.
+// src: [segments, seg_len], dst: [segments]
+void sattn_rvv_segmented_sum_f32(const float* src, float* dst,
+                                 int64_t segments, int64_t seg_len);
+
+// Softmax over a single row vector of length D (in-place)
+void sattn_rvv_softmax_row_f32(float* row, int64_t D);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "backends/rvv/include/sparse_attention_rvv.h"
+#include "sparse_attention_rvv.h"
 
 static int parse_arg(int argc, char** argv, const char* key, long* out) {
   for (int i = 1; i < argc; ++i) {

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "backends/rvv/include/sparse_attention_rvv.h"
+#include "sparse_attention_rvv.h"
 
 int main(int argc, char** argv) {
   (void)argc; (void)argv;

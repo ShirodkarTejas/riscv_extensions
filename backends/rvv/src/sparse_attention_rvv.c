@@ -1,7 +1,8 @@
-#include "backends/rvv/include/sparse_attention_rvv.h"
+#include "sparse_attention_rvv.h"
 
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 #ifdef __riscv_vector
 #include <riscv_vector.h>
 #endif
@@ -229,7 +230,6 @@ void sattn_rvv_block_topk(
       // Precompute K block means: mean over tokens in block for each block
       // Here we compute on-the-fly per row for simplicity; an optimization would cache
         for (int64_t i = 0; i < L; ++i) {
-        for (int64_t i = 0; i < L; ++i) {
         // zero output row
         for (int64_t d = 0; d < D; ++d) O[offset_bhld(b, h, i, d, B, H, L, D)] = 0.f;
         // score blocks
@@ -330,4 +330,63 @@ void sattn_rvv_block_topk(
   free(block_scores);
 }
 
+
+#ifdef __riscv_vector
+void sattn_rvv_segmented_sum_f32(const float* src, float* dst,
+                                 int64_t segments, int64_t seg_len) {
+  for (int64_t s = 0; s < segments; ++s) {
+    const float* p = src + s * seg_len;
+    size_t i = 0; vfloat32m1_t vacc = vfmv_v_f_f32m1(0.0f, 1);
+    for (; i < (size_t)seg_len;) {
+      size_t vl = vsetvl_e32m1((size_t)(seg_len - i));
+      vfloat32m1_t vx = vle32_v_f32m1(p + i, vl);
+      vacc = vfadd_vv_f32m1(vacc, vx, vl);
+      i += vl;
+    }
+    float sum = vfmv_f_s_f32m1_f32(vfredsum_vs_f32m1_f32m1(vundef_f32m1(), vacc, vfmv_v_f_f32m1(0.0f, 1), 1));
+    dst[s] = sum;
+    _rvv_ctrs.br += (uint64_t)seg_len * sizeof(float);
+    _rvv_ctrs.bw += sizeof(float);
+  }
+}
+
+void sattn_rvv_softmax_row_f32(float* row, int64_t D) {
+  // Compute max
+  float m = -INFINITY;
+  {
+    size_t i = 0; vfloat32m1_t vmaxv = vfmv_v_f_f32m1(-INFINITY, 1);
+    for (; i < (size_t)D;) { size_t vl = vsetvl_e32m1((size_t)(D - i)); vfloat32m1_t vx = vle32_v_f32m1(row + i, vl); vmaxv = vfmax_vv_f32m1(vmaxv, vx, vl); i += vl; }
+    m = vfmv_f_s_f32m1_f32(vfredmax_vs_f32m1_f32m1(vundef_f32m1(), vmaxv, vfmv_v_f_f32m1(-INFINITY, 1), 1));
+  }
+  // Compute exp(x-m) and sum
+  float denom = 0.f; {
+    size_t i = 0; vfloat32m1_t vsum = vfmv_v_f_f32m1(0.0f, 1);
+    for (; i < (size_t)D;) { size_t vl = vsetvl_e32m1((size_t)(D - i)); vfloat32m1_t vx = vle32_v_f32m1(row + i, vl); vfloat32m1_t vy = vfncvt_f_f_w_f32m1(vfsub_vf_f32m1(vx, m, vl));
+      // no vector exp; do scalar loop fallback per chunk
+      float tmp[256]; size_t j = 0; for (; j < vl && j < 256; ++j) { tmp[j] = expf(((float*)&vy)[j]); }
+      // store back
+      for (j = 0; j < vl && j < 256; ++j) { row[i + j] = tmp[j]; }
+      vfloat32m1_t vtmp = vle32_v_f32m1(row + i, vl); vsum = vfadd_vv_f32m1(vsum, vtmp, vl); i += vl; }
+    denom = vfmv_f_s_f32m1_f32(vfredsum_vs_f32m1_f32m1(vundef_f32m1(), vsum, vfmv_v_f_f32m1(0.0f, 1), 1));
+  }
+  float inv = 1.f / (denom + 1e-12f);
+  // Normalize
+  { size_t i = 0; for (; i < (size_t)D;) { size_t vl = vsetvl_e32m1((size_t)(D - i)); vfloat32m1_t vx = vle32_v_f32m1(row + i, vl); vx = vfmul_vf_f32m1(vx, inv, vl); vse32_v_f32m1(row + i, vx, vl); i += vl; } }
+  _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+}
+#else
+void sattn_rvv_segmented_sum_f32(const float* src, float* dst,
+                                 int64_t segments, int64_t seg_len) {
+  for (int64_t s = 0; s < segments; ++s) {
+    float acc = 0.f; for (int64_t i = 0; i < seg_len; ++i) acc += src[s*seg_len + i]; dst[s] = acc;
+    _rvv_ctrs.br += (uint64_t)seg_len * sizeof(float); _rvv_ctrs.bw += sizeof(float);
+  }
+}
+void sattn_rvv_softmax_row_f32(float* row, int64_t D) {
+  float m = -INFINITY; for (int64_t i = 0; i < D; ++i) if (row[i] > m) m = row[i];
+  float denom = 0.f; for (int64_t i = 0; i < D; ++i) { row[i] = expf(row[i] - m); denom += row[i]; }
+  float inv = 1.f / (denom + 1e-12f); for (int64_t i = 0; i < D; ++i) row[i] *= inv;
+  _rvv_ctrs.br += (uint64_t)D * sizeof(float); _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+}
+#endif
 

@@ -38,6 +38,9 @@ struct LowerToRVVPass : public PassWrapper<LowerToRVVPass, OperationPass<ModuleO
         if (spec.getValue() == "topk_per_query") {
           st.addAttribute("topk_enabled", BoolAttr::get(op->getContext(), true));
         }
+        if (spec.getValue() == "lsh") {
+          st.addAttribute("lsh_enabled", BoolAttr::get(op->getContext(), true));
+        }
       }
       b.create(st);
       toErase.push_back(op);

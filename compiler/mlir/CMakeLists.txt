@@ -37,3 +37,11 @@ add_subdirectory(transforms)
 add_subdirectory(tools/sattn-opt)
 
 
+# Simple test target to run Python-based MLIR tests
+add_custom_target(check-mlir
+  COMMAND ${Python3_EXECUTABLE} -m pytest -q ${CMAKE_SOURCE_DIR}/compiler/mlir/tests
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+  COMMENT "Running MLIR Python tests"
+)
+
+
