@@ -6,6 +6,9 @@ set(SATTN_TRANSFORMS_SRC
   LowerToRoCC.cpp
   Vectorize.cpp
   Bufferize.cpp
+)
+
+set(LLVM_OPTIONAL_SOURCES
   Passes.cpp
 )
 

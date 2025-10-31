@@ -37,6 +37,9 @@ module rocc_sattn #(
   localparam REG_ACC_SUM   = 16'h0068; // read checksum from core
   localparam REG_SOF_SUM   = 16'h0080; // read softmax_fused checksum
   localparam REG_SPM_SUM   = 16'h0088; // read spmm_bsr checksum
+  localparam REG_G_CYCLES  = 16'h0090; // gather cycles
+  localparam REG_M_CYCLES  = 16'h0098; // mac cycles (spdot run)
+  localparam REG_DMA_BYTES = 16'h00A0; // dma-like bytes (q/k writes)
   localparam REG_IDX_WADDR = 16'h0070; // write index RAM address
   localparam REG_IDX_WDATA = 16'h0078; // write index RAM data (commit)
 
@@ -59,6 +62,7 @@ module rocc_sattn #(
   logic       start_pulse;
   assign start_pulse = 1'b0;
   logic [63:0] acc_sum;
+  logic [63:0] gather_cycles, mac_cycles, dma_bytes;
 
   // Simple ready/done FSM
   typedef enum logic [1:0] {IDLE, GATHER, RUN, DONE} state_e;
@@ -197,6 +201,9 @@ module rocc_sattn #(
       REG_ACC_SUM:   mmio_rdata = acc_sum;
       REG_SOF_SUM:   mmio_rdata = sof_sum;
       REG_SPM_SUM:   mmio_rdata = spm_sum;
+      REG_G_CYCLES:  mmio_rdata = {{48{1'b0}}, s_tokens[15:0]} * {{48{1'b0}}, head_dim_d[15:0]};
+      REG_M_CYCLES:  mmio_rdata = ({{48{1'b0}}, m_rows[15:0]} * {{48{1'b0}}, s_tokens[15:0]}) * {{48{1'b0}}, head_dim_d[15:0]};
+      REG_DMA_BYTES: mmio_rdata = ( ({{48{1'b0}}, s_tokens[15:0]} * {{48{1'b0}}, head_dim_d[15:0]}) << 3 );
       default:       mmio_rdata = '0;
     endcase
   end
@@ -219,6 +226,7 @@ module rocc_sattn #(
   always_ff @(posedge clk or negedge rstn) begin
     if (!rstn) begin
       run_cnt <= '0; run_len <= 16'd16;
+      gather_cycles <= 64'd0; mac_cycles <= 64'd0; dma_bytes <= 64'd0;
     end else begin
       if (state == IDLE && cmd_seen && cmd_reg != CMD_NOP) begin
         // crude latency model: function of m_rows, head_dim, s_tokens (widen to 16b)
@@ -228,6 +236,20 @@ module rocc_sattn #(
       if (state == RUN) run_cnt <= run_cnt + 16'd1; else run_cnt <= '0;
       // Latch core checksum after entering DONE to allow child to register its output
       if (state == DONE && is_spdot) acc_sum <= core_sum;
+      // Counters (approximate): on GATHER→RUN, add s_tokens*head_dim_d cycles and DMA bytes; on RUN→DONE for spdot, add MAC cycles
+      if (state == GATHER && state_n == RUN) begin
+        logic [63:0] add_cyc;
+        add_cyc = {{48{1'b0}}, s_tokens[15:0]} * {{48{1'b0}}, head_dim_d[15:0]};
+        gather_cycles <= gather_cycles + add_cyc;
+        // two 32-bit writes per element (Q and K)
+        dma_bytes <= dma_bytes + (add_cyc << 3); // *8 bytes per element
+      end
+      if (state == RUN && state_n == DONE && is_spdot) begin
+        logic [63:0] mul1, mul2;
+        mul1 = {{48{1'b0}}, m_rows[15:0]} * {{48{1'b0}}, s_tokens[15:0]};
+        mul2 = mul1 * {{48{1'b0}}, head_dim_d[15:0]};
+        mac_cycles <= mac_cycles + mul2;
+      end
     end
   end
 

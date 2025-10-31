@@ -23,6 +23,7 @@ int main(int argc, char** argv) {
   }
 
   uint64_t c0 = sattn_rdcycle();
+  sattn_rvv_counters_reset();
   sattn_rvv_block_topk(Q, K, V, O, s, p);
   uint64_t c1 = sattn_rdcycle();
 
@@ -34,6 +35,11 @@ int main(int argc, char** argv) {
   double acc = 0.0;
   for (size_t i = 0; i < elems; ++i) acc += O[i];
   printf("checksum=%.6f\n", acc);
+  sattn_rvv_counters_t ctrs; sattn_rvv_counters_get(&ctrs);
+  printf("rvv_bytes_read=%llu bytes_written=%llu mac_flops=%llu\n",
+         (unsigned long long)ctrs.bytes_read,
+         (unsigned long long)ctrs.bytes_written,
+         (unsigned long long)ctrs.mac_flops);
 
   free(Q); free(K); free(V); free(O);
   return 0;

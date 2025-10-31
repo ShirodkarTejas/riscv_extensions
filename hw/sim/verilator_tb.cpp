@@ -148,6 +148,12 @@ int main(int argc, char** argv) {
         spm_expected += (unsigned long long)(row + t + k);
   printf("spmm_bsr checksum=0x%llx expected=0x%llx -> %s\n",
          (unsigned long long)spm_sum, spm_expected, (spm_sum == spm_expected ? "PASS" : "MISMATCH"));
+  // Print proxy counters (derived) to avoid dependence on RTL-specific wiring
+  uint64_t proxy_gcy = (uint64_t)S * (uint64_t)D;
+  uint64_t proxy_mcy = (uint64_t)M * (uint64_t)S * (uint64_t)D;
+  uint64_t proxy_dma = ((uint64_t)S * (uint64_t)D) * 8ull; // Q+K 4B each per element
+  printf("rocc_counters(proxy): gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
+         (unsigned long long)proxy_gcy, (unsigned long long)proxy_mcy, (unsigned long long)proxy_dma);
   delete top;
   return 0;
 }

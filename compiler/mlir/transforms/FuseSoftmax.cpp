@@ -1,6 +1,6 @@
 // Fuse softmax: tag sattn.sparse_attention ops with fused_softmax=true when softmax_mode=logsumexp
 
-#include "compiler/mlir/transforms/Passes.h"
+#include "transforms/Passes.h"
 
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinOps.h"

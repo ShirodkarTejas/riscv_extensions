@@ -1,92 +1,43 @@
 #!/usr/bin/env python3
-"""
-Emit a plain-text indices file (one integer per line) from a sattn MLIR file.
-Useful for preloading the RoCC sim index RAM.
-"""
 import argparse
+import math
 import re
 
 
-def parse_mlir_attrs(path: str):
-    with open(path, 'r') as f:
-        txt = f.read()
-    m = re.search(r'"sattn\.sparse_attention"\([^)]*\)\s*\{([^}]*)\}', txt, re.MULTILINE | re.DOTALL)
-    if not m:
-        raise SystemExit("No sattn.sparse_attention op found")
-    attrs = m.group(1)
-    def get(name, typ=str, default=None):
-        mm = re.search(rf'{name}\s*=\s*"?([A-Za-z0-9_\.]+)"?', attrs)
-        if not mm:
-            return default
-        val = mm.group(1)
-        if typ is int:
-            return int(val)
-        if typ is float:
-            return float(val)
-        return val
-    # Parse indices array if present
-    midx = re.search(r'indices\s*=\s*\[([^\]]*)\]', attrs)
-    indices = None
-    if midx:
-        raw = midx.group(1)
-        nums = re.findall(r'-?\d+', raw)
-        try:
-            indices = [int(n) for n in nums]
-        except Exception:
-            indices = None
-    midxb = re.search(r'block_indices\s*=\s*\[([^\]]*)\]', attrs)
-    block_indices = None
-    if midxb:
-        raw = midxb.group(1)
-        nums = re.findall(r'-?\d+', raw)
-        try:
-            block_indices = [int(n) for n in nums]
-        except Exception:
-            block_indices = None
-    return {
-        'pattern': get('pattern', str, 'sliding_global'),
-        'tile_S': get('tile_S', int, 128),
-        'window_size': get('window_size', int, 512),
-        'block_size': get('block_size', int, 64),
-        'keep_ratio': get('keep_ratio', float, 0.12),
-        'indices': indices,
-        'block_indices': block_indices,
-    }
+def parse_attrs(mlir_text: str):
+    # Try lowered form first: sattn.rocc_call{ ... s_tokens=.., block_size=.. }
+    m = re.search(r"sattn\.rocc_call[^\{]*\{([^}]*)\}", mlir_text, re.MULTILINE | re.DOTALL)
+    if m:
+        attrs = m.group(1)
+        def get_int(name, default):
+            mm = re.search(rf"{name}\s*=\s*([0-9]+)", attrs)
+            return int(mm.group(1)) if mm else default
+        s_tokens = get_int('s_tokens', 16)
+        block_size = get_int('block_size', 4)
+        return s_tokens, block_size
+
+    # Fallback: unlowered sattn.sparse_attention with tile_S and block_size
+    mm = re.search(r'sattn\.sparse_attention[^\"]*block_size\s*=\s*([0-9]+)\s*:\s*i64', mlir_text)
+    bs = int(mm.group(1)) if mm else 4
+    mm2 = re.search(r'tile_S\s*=\s*([0-9]+)\s*:\s*i64', mlir_text)
+    s_tok = int(mm2.group(1)) if mm2 else 16
+    return s_tok, bs
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Emit indices.txt from lowered or raw MLIR")
     ap.add_argument('--in-mlir', required=True)
     ap.add_argument('--out-indices', required=True)
     args = ap.parse_args()
 
-    cfg = parse_mlir_attrs(args.in_mlir)
-    S = int(cfg['tile_S'])
-    if cfg['pattern'] == 'block_topk' and cfg.get('block_indices'):
-        # write block indices directly; gather expands to tokens
-        idx = cfg['block_indices']
-    elif cfg['indices']:
-        idx = cfg['indices'][:S]
-    elif cfg['pattern'] == 'sliding_global':
-        w = int(cfg['window_size'])
-        cnt = min(S, max(1, 2 * w + 1))
-        idx = list(range(cnt))
-        if len(idx) < S:
-            idx += list(range(cnt, S))
-    elif cfg['pattern'] == 'block_topk':
-        bs = int(cfg['block_size']); kr = float(cfg['keep_ratio'])
-        k_blocks = max(1, int((S + bs - 1) // bs * kr))
-        total = min(S, k_blocks * bs)
-        idx = list(range(total))
-        if len(idx) < S:
-            idx += list(range(total, S))
-    else:
-        idx = list(range(S))
+    with open(args.in_mlir, 'r') as f:
+        txt = f.read()
 
-    with open(args.out_indices, 'w') as f:
-    for v in idx[:S]:
-            f.write(f"{v}\n")
-    print(f"Wrote indices to {args.out_indices} ({len(idx[:S])} entries)")
+    s_tokens, block_size = parse_attrs(txt)
+    idx_count = max(1, math.ceil(s_tokens / (block_size if block_size else 1)))
+    with open(args.out_indices, 'w') as out:
+        for i in range(idx_count):
+            out.write(f"{i}\n")
 
 
 if __name__ == '__main__':

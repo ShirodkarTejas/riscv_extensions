@@ -1,6 +1,6 @@
 // Materialize sparse indices (BSR) flag on sattn.sparse_attention ops.
 
-#include "compiler/mlir/transforms/Passes.h"
+#include "transforms/Passes.h"
 
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinOps.h"
