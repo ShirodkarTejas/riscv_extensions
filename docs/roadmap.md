@@ -31,6 +31,10 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - RoCC counters refined: per-cycle gather/mac increments and DMA byte counting; pytest asserts non-zero counters.
  - RVV vectorization (expanded): tiled variants for `sliding_window`, `block_local_global` and `lsh`; runner prints counters and supports `--tile_rows`.
  - Quantization (RVV): added bf16, int8, and int4 paths for `sliding_window` and `block_local_global`; runner supports `--precision` and `--scale_{q,k,v}_x1000`; MLIR bridge accepts `precision`/`scale_*` attributes and forwards to runner; tests added.
+ - Selector tests and heuristics: added checks (FileCheck/substring) for spec flips; selector now also considers `gqa_group_size` and `comp_block_size`.
+ - RVV bridge autotune: `sattn_run_rvv_from_mlir.py` now forwards `--autotune` to the runner; test added.
+ - RVV metrics snapshot: script `scripts/update_rvv_metrics_table.py` auto-updates a table in `backends/rvv/README.md` with current proxy counters.
+ - RoCC sim GQA/comp: MMIO for `gqa_group_size`/`comp_block_size` plus tests asserting iteration changes; testbench prints these in `spec_info`.
  - Grouped-query & compression blocks:
    - RVV: `gqa_group_size` shares selection across heads; `comp_block_size` enables compression-block scoring; bridged from MLIR and exercised in tests.
    - RoCC sim: new MMIOs for `gqa_group_size` and `comp_block_size`; simple latency model reflects their effect; tests assert cycle changes.
@@ -43,10 +47,10 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 2) Multi-spec support and selection
    - Extend `sattn.spec` choices (BLG, N:M, topk_per_query, LSH done); carry through to backends (hooks added; RVV kernels/stubs implemented)
    - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (RVV refs added; RoCC functional checks pending)
-   - Upgrade selector to a lightweight cost model (extended); add hardware probe; allow override (env/attr overrides added; probe flags minimal)
+   - Selector cost model extended (keep/window/cache-fit + GQA/comp); remaining: add hardware capability probe; refine per-model heuristics
 3) RVV performance path
    - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar — initial tiled variants done
-   - Add simple autotune hooks in runner (tile_rows sweep); validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches
+   - Add simple autotune hooks in runner (tile_rows sweep); validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches — bridge passthrough done
    - Quantization calibration (optional): heuristics or lightweight calibration to choose scales per spec/dataset; document recommended defaults
    - Evaluate impact of GQA/compression settings on bandwidth/compute counters; add guidance to docs
 4) RoCC compute datapath
@@ -63,8 +67,7 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - Stage 8: Expanded evaluation matrix and plots
 
 ## Next actions (short)
-- MLIR: extend per-spec lowering surfaces; keep FileCheck tests green
-- Multi-spec: maintain selector overrides/probes as specs expand; add RoCC-side per-spec semantics
-- RVV: wire autotune hooks into runner; keep compare tests for any new kernels; document counters output
-- RoCC: refine counters and stub fidelity; add simple utilization invariants in tests
-- E2E: extend runner to accept emitted indices/masks; integrate with roundtrip scripts
+- MLIR: hook indices/BSR masks from IR into RVV/Sim runners (unify text/JSON emission)
+- Multi-spec: add hardware capability probe and fold into selector; keep tests green
+- RVV: keep compare tests for new kernels; maintain snapshot metrics via script
+- RoCC: refine counters and stub fidelity; keep invariants tests
