@@ -14,6 +14,9 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - Docker: dev image with Verilator + LLVM/MLIR 18 (Ubuntu 24.04) and Python venv
  - Build: minimal `sattn-opt` built against system MLIR; optional pass test (smoke) wired
  - E2E: `sattn_compile_and_sim.py` with auto-fallback, emits indices/desc and runs Verilator sim
+ - Multi-spec: extended `sattn.spec` choices (BLG, N:M, topk_per_query, LSH) and carried through to backends (per-spec lowerings for RVV and RoCC registered; RVV kernels/stubs implemented)
+ - MLIR → RVV indices/BSR path hooked; unified artifacts emission used across tools (RoCC sim consumes desc; RVV runner consumes indices)
+ - Additional sparse attention types implemented: sliding-window (incl. dilated/ring), landmark, block-local + global, N:M structured, top-k per query, LSH
 
 ## Recent progress (since last update)
 - RVV: vectorized helpers for gather/scatter and block reductions; cycles bench updated.
@@ -46,27 +49,18 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 ## Remaining Work (prioritized)
 1) MLIR production integration
    - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
-   - (Done for RVV runner) Hook indices/BSR masks from IR into RVV; unify text/JSON emission across tools (RoCC sim already consumes desc; indices consumed by RVV)
 2) Multi-spec support and selection
-   - Extend `sattn.spec` choices (BLG, N:M, topk_per_query, LSH done); carry through to backends (hooks added; RVV kernels/stubs implemented)
-   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (RVV refs added; RoCC functional checks pending)
-   - Selector cost model extended (keep/window/cache-fit + GQA/comp); remaining: add hardware capability probe; refine per-model heuristics
+   - RoCC: add functional checks vs CPU for per-spec lowerings
+   - Add hardware capability probe integration and refine per-model heuristics
 3) RVV performance path
    - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar — initial tiled variants done
    - Add simple autotune hooks in runner (tile_rows sweep); validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches — bridge passthrough done
-   - Quantization calibration (optional): heuristics or lightweight calibration to choose scales per spec/dataset; document recommended defaults
+   - Quantization docs: document recommended defaults; optional heuristics beyond calibration
    - Evaluate impact of GQA/compression settings on bandwidth/compute counters; add guidance to docs
 4) RoCC compute datapath
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
-5) Additional sparse attention types
-   - Sliding-window/dilated (dilation + ring mode added) — done
-   - Landmark (evenly spaced representatives baseline) — done
-   - Block-local + global tokens — done
-   - N:M structured — done
-   - Top-k per query — done
-   - LSH/hashed buckets — done
-6) Packaging/UX
+5) Packaging/UX
    - CLI for profiles/specs and selection; Python packaging; CI for CPU (CUDA optional) and sim
 
 ## Milestone tracking
