@@ -34,6 +34,9 @@ module rocc_sattn #(
   localparam REG_S_TOKENS  = 16'h0050;
   localparam REG_SCALE_FP  = 16'h0058;
   localparam REG_CMD       = 16'h0060; // write to issue; read status
+  localparam REG_ACC_SUM   = 16'h0068; // read checksum from core
+  localparam REG_IDX_WADDR = 16'h0070; // write index RAM address
+  localparam REG_IDX_WDATA = 16'h0078; // write index RAM data (commit)
 
   logic [63:0] q_base, k_base, v_base, o_base, idx_base, strd_base;
   logic [31:0] m_rows, head_dim_d, block_size, k_blocks, s_tokens;
@@ -52,13 +55,67 @@ module rocc_sattn #(
 
   logic [7:0] cmd_reg;
   logic       start_pulse;
+  logic [63:0] acc_sum;
 
   // Simple ready/done FSM
-  typedef enum logic [1:0] {IDLE, RUN, DONE} state_e;
+  typedef enum logic [1:0] {IDLE, GATHER, RUN, DONE} state_e;
   state_e state, state_n;
 
   assign busy = (state == RUN);
   assign done = (state == DONE);
+
+  // spdot_bsr core integration
+  logic core_start, core_busy, core_done;
+  wire  is_spdot = (cmd_reg == CMD_SPDOT_BSR);
+
+  spdot_bsr_core u_spdot (
+    .clk(clk), .rstn(rstn),
+    .start(core_start),
+    .m_rows(m_rows[15:0]), .head_dim_d(head_dim_d[15:0]), .s_tokens(s_tokens[15:0]),
+    .q_raddr(q_raddr), .q_rdata(q_rdata),
+    .k_raddr(k_raddr), .k_rdata(k_rdata),
+    .busy(core_busy), .done(core_done), .checksum_out(core_sum)
+  );
+
+  logic [63:0] core_sum;
+
+  // gather stub
+  logic g_start, g_busy, g_done;
+  logic        q_wen;
+  logic [15:0] q_waddr;
+  logic [31:0] q_wdata;
+  logic        k_wen;
+  logic [15:0] k_waddr;
+  logic [31:0] k_wdata;
+  logic [15:0] q_raddr, k_raddr;
+  logic [31:0] q_rdata, k_rdata;
+  // index RAM interface
+  logic [15:0] idx_rd_addr;
+  logic [15:0] idx_rd_data;
+  gather2d_stub u_gather (
+    .clk(clk), .rstn(rstn), .start(g_start), .s_tokens(s_tokens[15:0]), .head_dim_d(head_dim_d[15:0]),
+    .q_wen(q_wen), .q_waddr(q_waddr), .q_wdata(q_wdata),
+    .k_wen(k_wen), .k_waddr(k_waddr), .k_wdata(k_wdata),
+    .idx_rd_addr(idx_rd_addr), .idx_rd_data(idx_rd_data),
+    .busy(g_busy), .done(g_done)
+  );
+
+  // Q/K scratchpads
+  spad #(.ADDR_WIDTH(16), .DATA_WIDTH(32)) u_q_spad (
+    .clk(clk), .wen(q_wen), .waddr(q_waddr), .wdata(q_wdata), .raddr(q_raddr), .rdata(q_rdata)
+  );
+  spad #(.ADDR_WIDTH(16), .DATA_WIDTH(32)) u_k_spad (
+    .clk(clk), .wen(k_wen), .waddr(k_waddr), .wdata(k_wdata), .raddr(k_raddr), .rdata(k_rdata)
+  );
+
+  // index RAM (depth 64K entries)
+  logic        idx_wen;
+  logic [15:0] idx_waddr;
+  logic [15:0] idx_wdata;
+  idx_ram #(.ADDR_WIDTH(16), .DATA_WIDTH(16)) u_idx (
+    .clk(clk), .rstn(rstn), .wen(idx_wen), .waddr(idx_waddr), .wdata(idx_wdata),
+    .raddr(idx_rd_addr), .rdata(idx_rd_data)
+  );
 
   // MMIO write
   always_ff @(posedge clk or negedge rstn) begin
@@ -66,7 +123,7 @@ module rocc_sattn #(
       q_base <= '0; k_base <= '0; v_base <= '0; o_base <= '0;
       idx_base <= '0; strd_base <= '0;
       m_rows <= '0; head_dim_d <= '0; block_size <= '0; k_blocks <= '0; s_tokens <= '0;
-      scale_fp_bits <= '0; cmd_reg <= '0;
+      scale_fp_bits <= '0; cmd_reg <= '0; idx_wen <= 1'b0; idx_waddr <= '0; idx_wdata <= '0;
     end else if (mmio_wen) begin
       unique case (mmio_addr)
         REG_Q_BASE:    q_base <= mmio_wdata;
@@ -82,8 +139,12 @@ module rocc_sattn #(
         REG_S_TOKENS:  s_tokens <= mmio_wdata[31:0];
         REG_SCALE_FP:  scale_fp_bits <= mmio_wdata[31:0];
         REG_CMD:       cmd_reg <= mmio_wdata[7:0];
+        REG_IDX_WADDR: begin idx_waddr <= mmio_wdata[15:0]; idx_wen <= 1'b0; end
+        REG_IDX_WDATA: begin idx_wdata <= mmio_wdata[15:0]; idx_wen <= 1'b1; end
         default: ;
       endcase
+    end else begin
+      idx_wen <= 1'b0;
     end
   end
 
@@ -104,11 +165,12 @@ module rocc_sattn #(
       REG_S_TOKENS:  mmio_rdata = {32'd0, s_tokens};
       REG_SCALE_FP:  mmio_rdata = {32'd0, scale_fp_bits};
       REG_CMD:       mmio_rdata = {62'd0, (state==RUN), (state==DONE)}; // [1]=busy, [0]=done
+      REG_ACC_SUM:   mmio_rdata = acc_sum;
       default:       mmio_rdata = '0;
     endcase
   end
 
-  // FSM: when cmd written, go RUN for a few cycles, then DONE
+  // FSM: when cmd written, go RUN; for spdot use core_done, otherwise variable latency
   logic cmd_seen;
   always_ff @(posedge clk or negedge rstn) begin
     if (!rstn) begin
@@ -120,17 +182,49 @@ module rocc_sattn #(
     end
   end
 
-  logic [3:0] run_cnt;
+  logic [15:0] run_cnt;
+  logic [15:0] run_len;
 
   always_ff @(posedge clk or negedge rstn) begin
-    if (!rstn) run_cnt <= '0; else if (state == RUN) run_cnt <= run_cnt + 4'd1; else run_cnt <= '0;
+    if (!rstn) begin
+      run_cnt <= '0; run_len <= 16'd16;
+    end else begin
+      if (state == IDLE && cmd_seen && cmd_reg != CMD_NOP) begin
+        // crude latency model: function of m_rows, head_dim, s_tokens
+        run_len <= (m_rows[7:0] + head_dim_d[7:0] + s_tokens[7:0]);
+        if (run_len == 16'd0) run_len <= 16'd16;
+      end
+      if (state == RUN) run_cnt <= run_cnt + 16'd1; else run_cnt <= '0;
+      if (state == RUN && is_spdot && core_done) acc_sum <= core_sum;
+    end
   end
 
   always_comb begin
     state_n = state;
+    core_start = 1'b0;
+    g_start = 1'b0;
     unique case (state)
-      IDLE: if (cmd_seen && cmd_reg != CMD_NOP) state_n = RUN;
-      RUN:  if (run_cnt == 4'd8) state_n = DONE; // fixed latency placeholder
+      IDLE: if (cmd_seen && cmd_reg != CMD_NOP) begin
+               if (is_spdot) begin
+                 state_n = GATHER;
+                 g_start = 1'b1;
+               end else begin
+                 state_n = RUN;
+               end
+             end
+      GATHER: begin
+               if (g_done) begin
+                 state_n = RUN;
+                 core_start = 1'b1;
+               end
+              end
+      RUN:   begin
+               if (is_spdot) begin
+                 if (core_done) state_n = DONE;
+               end else begin
+                 if (run_cnt >= run_len) state_n = DONE; // variable latency placeholder
+               end
+             end
       DONE: state_n = IDLE;
       default: state_n = IDLE;
     endcase

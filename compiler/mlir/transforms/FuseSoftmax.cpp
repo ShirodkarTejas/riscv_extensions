@@ -1,21 +1,34 @@
-// Placeholder pass: fuse scale+mask+softmax into a single tile-local op.
-// Documentation stub for mapping to softmax_fused primitive.
+// Fuse softmax: tag sattn.sparse_attention ops with fused_softmax=true when softmax_mode=logsumexp
 
 #include "compiler/mlir/transforms/Passes.h"
 
-namespace mlir {
-namespace sattn {
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/Pass/Pass.h"
 
-class FuseSoftmaxPass final /*: public PassWrapper<...>*/ {
-public:
-  void runOnOperation() {}
+using namespace mlir;
+
+namespace mlir::sattn {
+
+namespace {
+struct FuseSoftmaxPass : public PassWrapper<FuseSoftmaxPass, OperationPass<ModuleOp>> {
+  void runOnOperation() override {
+    ModuleOp module = getOperation();
+    module.walk([&](Operation *op) {
+      if (op->getName().getStringRef() != "sattn.sparse_attention") return;
+      if (auto attr = op->getAttrOfType<StringAttr>("softmax_mode")) {
+        if (attr.getValue() == "logsumexp") {
+          op->setAttr("fused_softmax", UnitAttr::get(op->getContext()));
+        }
+      }
+    });
+  }
 };
+} // namespace
 
-std::unique_ptr<Pass> createFuseSoftmaxPass() {
-  return std::unique_ptr<Pass>(new FuseSoftmaxPass());
-}
+std::unique_ptr<Pass> createFuseSoftmaxPass() { return std::make_unique<FuseSoftmaxPass>(); }
 
-}  // namespace sattn
-}  // namespace mlir
+} // namespace mlir::sattn
 
 

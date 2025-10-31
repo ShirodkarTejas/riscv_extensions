@@ -1,19 +1,33 @@
-// Placeholder pass: choose tile sizes and restructure into tiled loops/ops.
-// Documentation stub for future MLIR vector/bufferization lowering.
+// Tile pass: set simple tiling hints on sattn.sparse_attention ops
 
 #include "compiler/mlir/transforms/Passes.h"
 
-namespace mlir {
-namespace sattn {
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/Pass/Pass.h"
 
-class TilePass final /*: public PassWrapper<...>*/ {
-public:
-  void runOnOperation() {}
+using namespace mlir;
+
+namespace mlir::sattn {
+
+namespace {
+struct TilePass : public PassWrapper<TilePass, OperationPass<ModuleOp>> {
+  void runOnOperation() override {
+    ModuleOp module = getOperation();
+    module.walk([&](Operation *op) {
+      if (op->getName().getStringRef() != "sattn.sparse_attention") return;
+      // Heuristic tiling defaults; real pass would analyze shapes
+      op->setAttr("tile_M", IntegerAttr::get(IntegerType::get(op->getContext(), 64), 64));
+      op->setAttr("tile_D", IntegerAttr::get(IntegerType::get(op->getContext(), 64), 64));
+      op->setAttr("tile_S", IntegerAttr::get(IntegerType::get(op->getContext(), 64), 128));
+    });
+  }
 };
+} // namespace
 
-std::unique_ptr<Pass> createTilePass() { return std::unique_ptr<Pass>(new TilePass()); }
+std::unique_ptr<Pass> createTilePass() { return std::make_unique<TilePass>(); }
 
-}  // namespace sattn
-}  // namespace mlir
+} // namespace mlir::sattn
 
 

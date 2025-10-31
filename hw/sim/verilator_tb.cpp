@@ -22,6 +22,28 @@ int main(int argc, char** argv) {
   auto mmio_read  = [&](uint64_t addr) -> uint64_t {
     top->mmio_addr = addr; top->mmio_wen = 0; top->mmio_ren = 1; step(top,1); top->mmio_ren = 0; return top->mmio_rdata; };
 
+  // Optionally read indices from file passed as argv[1]
+  if (argc > 1) {
+    FILE* f = fopen(argv[1], "r");
+    if (f) {
+      char buf[128]; int idx = 0;
+      while (fgets(buf, sizeof(buf), f)) {
+        int val = atoi(buf);
+        mmio_write(0x0070, (uint64_t)idx);     // REG_IDX_WADDR
+        mmio_write(0x0078, (uint64_t)(val & 0xFFFF));   // REG_IDX_WDATA
+        idx++;
+        if (idx >= 65536) break;
+      }
+      fclose(f);
+    }
+  } else {
+    // Populate a few indices in index RAM: write addr then data (commit)
+    for (int i = 0; i < 16; ++i) {
+      mmio_write(0x0070, (uint64_t)i);     // REG_IDX_WADDR
+      mmio_write(0x0078, (uint64_t)(i));   // REG_IDX_WDATA
+    }
+  }
+
   // Program minimal descriptor
   mmio_write(0x0030, 64); // m_rows
   mmio_write(0x0038, 64); // head_dim_d
@@ -40,7 +62,8 @@ int main(int argc, char** argv) {
     step(top, 1);
     ++iters;
   }
-  printf("verilator_tb: completed in %d iterations\n", iters);
+  uint64_t sum_lo = mmio_read(0x0068);
+  printf("verilator_tb: completed in %d iterations, checksum=0x%llx\n", iters, (unsigned long long)sum_lo);
   delete top;
   return 0;
 }

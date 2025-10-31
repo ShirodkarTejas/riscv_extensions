@@ -18,6 +18,7 @@ Run the bench on Spike or your RVV board:
 ```bash
 # Spike/QEMU load paths differ; on a board just run the ELF
 ./sattn_rvv_bench
+./sattn_rvv_bench_blocktopk
 ```
 
 Output:
@@ -34,6 +35,6 @@ checksum=...  # sanity
 - `CMakeLists.txt`: static lib + bench
 
 ## Next steps
-- Replace inner loops with RVV intrinsics (vectorized dot/reduction)
+- Replace inner loops with RVV intrinsics (vectorized dot/reduction) — PARTIALLY DONE for sliding_global
 - Add segmented reductions and block gather/scatter utilities
 - Extend to block_topk (preselect indices) and fused softmax path

@@ -14,4 +14,7 @@ target_include_directories(sattn_rvv PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_executable(sattn_rvv_bench bench/measure_cycles.c)
 target_link_libraries(sattn_rvv_bench PRIVATE sattn_rvv)
 
+add_executable(sattn_rvv_bench_blocktopk bench/measure_cycles_blocktopk.c)
+target_link_libraries(sattn_rvv_bench_blocktopk PRIVATE sattn_rvv)
+
 

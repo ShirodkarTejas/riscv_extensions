@@ -30,6 +30,21 @@ void sattn_rvv_sliding_global(
 // Read cycle counter if available (RISC-V rdcycle), else returns 0.
 uint64_t sattn_rdcycle();
 
+// Block-topk sparse attention baseline (selection scalar, math vectorized where possible)
+typedef struct {
+  int block_size;   // tokens per block
+  float keep_ratio; // fraction of blocks kept per row
+  int global_tokens;
+} sattn_blocktopk_params_t;
+
+void sattn_rvv_block_topk(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_blocktopk_params_t params);
+
 #ifdef __cplusplus
 }
 #endif

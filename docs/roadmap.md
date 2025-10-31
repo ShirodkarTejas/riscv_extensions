@@ -12,6 +12,11 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - Bench: microbench, autotune, eval
 - Docs: quickstart, profiles, shapes/contract, scope decisions
 
+## Recent progress (since last update)
+- RVV: sliding-window inner math vectorized with RVV; block_topk baseline added; new cycles bench for both paths.
+- RoCC: added index RAM, dual scratchpads (Q/K), gather→scratchpad→MAC core with checksum; Verilator harness accepts index files.
+- MLIR: implemented initial passes (materialize-indices, tiling hints, fuse-softmax, lower-to-rvv/rocc), CMake integration, and `sattn-opt` tool; added `sattn_emit_rocc.py` to emit demo descriptors from MLIR.
+
 ## Remaining Work (prioritized)
 1) MLIR production integration
    - Implement actual MLIR passes (materialize-indices, tile, fuse-softmax, lower-to-{rvv,rocc})
@@ -36,3 +41,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - Stage 3–5 focus: RVV vectorization and one RoCC primitive in RTL with sim match to CPU
 - Stage 6: MLIR real passes + autotuner integration
 - Stage 8: Expanded evaluation matrix and plots
+
+## Next actions (short)
+- RoCC: add simple address generation from index RAM (BSR decode stub) to drive gather addresses; keep checksum for verification.
+- MLIR: extend lowering to emit indices/CSR descriptors matching the RoCC programmer’s model; add a small test that round-trips MLIR → indices → sim.
+- RVV: implement segmented reductions and a gather/scatter helper for block_topk.
