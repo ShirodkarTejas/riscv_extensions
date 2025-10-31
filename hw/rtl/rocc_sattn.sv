@@ -44,6 +44,8 @@ module rocc_sattn #(
   localparam REG_DMA_KBYTES= 16'h00B0; // dma bytes into K spad
   localparam REG_GQA_GSZ  = 16'h00C8; // grouped-query heads per KV group
   localparam REG_COMP_BS  = 16'h00D0; // compression block size (0 disables)
+  localparam REG_HW_VER   = 16'h00D8; // hardware version (read-only)
+  localparam REG_HW_CAPS  = 16'h00E0; // hardware capability bits (read-only)
   localparam REG_IDX_WADDR = 16'h0070; // write index RAM address
   localparam REG_IDX_WDATA = 16'h0078; // write index RAM data (commit)
 
@@ -52,6 +54,8 @@ module rocc_sattn #(
   logic [31:0] scale_fp_bits;
   logic [31:0] gqa_group_size;
   logic [31:0] comp_block_size;
+  logic [31:0] hw_version;
+  logic [31:0] hw_caps;
 
   typedef enum logic [7:0] {
     CMD_NOP         = 8'h00,
@@ -166,6 +170,9 @@ module rocc_sattn #(
       scale_fp_bits <= '0; cmd_reg <= '0; idx_wen <= 1'b0; idx_waddr <= '0; idx_wdata <= '0;
       dma_q_bytes <= 64'd0; dma_k_bytes <= 64'd0;
       gqa_group_size <= 32'd1; comp_block_size <= 32'd0;
+      hw_version <= 32'h0000_0001; // v1
+      // caps bitfield: [0]=BSR, [1]=SW, [2]=GQA, [3]=COMP
+      hw_caps <= 32'b0000_0000_0000_0000_0000_0000_0000_1111;
     end else if (mmio_wen) begin
       unique case (mmio_addr)
         REG_Q_BASE:    q_base <= mmio_wdata;
@@ -210,6 +217,8 @@ module rocc_sattn #(
       REG_SCALE_FP:  mmio_rdata = {32'd0, scale_fp_bits};
       REG_GQA_GSZ:   mmio_rdata = {32'd0, gqa_group_size};
       REG_COMP_BS:   mmio_rdata = {32'd0, comp_block_size};
+      REG_HW_VER:    mmio_rdata = {32'd0, hw_version};
+      REG_HW_CAPS:   mmio_rdata = {32'd0, hw_caps};
       REG_CMD:       mmio_rdata = {62'd0, (state==RUN), (state==DONE)}; // [1]=busy, [0]=done
       REG_ACC_SUM:   mmio_rdata = acc_sum;
       REG_SOF_SUM:   mmio_rdata = sof_sum;

@@ -109,6 +109,23 @@ Selector influence (heuristic):
 - If `gqa_group_size > 1`, the selector penalizes `sliding_window` (more per-head work) so `block_local_global` is preferred when otherwise close.
 - If `comp_block_size < block_size`, the selector discounts `block_local_global` cost (cheaper importance scoring), nudging selection toward block-based specs.
 
+Hardware hints (environment variables):
+- `SATTN_HW_L1_BYTES`: override the L1 size used in the block cache-fit heuristic (default 32768). Larger values favor block-based selection.
+- `SATTN_PREFER_BSR`: nudge the selector to prefer block-based specs (lowers BSR cost, raises sliding-window cost slightly).
+- `SATTN_PREFER_SW`: nudge the selector to prefer sliding-window.
+- Existing probes: `SATTN_DISABLE_SW`, `SATTN_DISABLE_BSR`, `SATTN_DISABLE_NM`, `SATTN_DISABLE_TOPK`, `SATTN_DISABLE_LSH`.
+
+### Tooling helpers
+
+Unified artifacts emitter (used by both RVV and simulation flows):
+
+```
+/opt/venv/bin/python compiler/mlir/tools/sattn_emit_artifacts.py --mlir input.mlir --out-stem indices
+# emits indices.txt and indices.desc and patches optional attrs (nm/topk/lsh/keep_ratio, gqa_group_size, comp_block_size)
+```
+
+The RVV runner bridge and the RoCC simulation wrapper both call this helper, keeping a single source of truth for emitted indices and descriptor fields.
+
 - End-to-end compile+sim wrapper:
 ```
 /opt/venv/bin/python compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir

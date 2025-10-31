@@ -80,6 +80,17 @@ def main():
         cmd += ['--gqa_group_size', str(attrs['gqa_group_size'])]
     if attrs.get('comp_block_size'):
         cmd += ['--comp_block_size', str(attrs['comp_block_size'])]
+
+    # For block-based specs, optionally emit indices and pass to runner
+    if attrs['spec'] in ('block_local_global', 'bsr', 'topk_per_query', 'nm_structured'):
+        try:
+            idx_path = os.path.splitext(args.mlir)[0] + '.indices.txt'
+            out_lower = args.mlir  # we can reuse input for emitter
+            run([sys.executable, 'compiler/mlir/tools/sattn_emit_indices_txt.py', '--in-mlir', out_lower, '--out-indices', idx_path])
+            if os.path.exists(idx_path):
+                cmd += ['--indices', idx_path]
+        except Exception:
+            pass
     # Precision/scales
     precision = attrs.get('precision') or 'fp32'
     if precision:

@@ -651,6 +651,37 @@ void sattn_rvv_block_topk(
   free(block_scores);
 }
 
+void sattn_rvv_block_topk_apply_selection(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    int block_size,
+    const int* sel_idx,
+    int sel_cnt) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  (void)block_size; // selection already expanded to token indices
+  const float scale = 1.0f / sqrtf((float)D);
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float denom = 0.f;
+      for (int t = 0; t < sel_cnt; ++t) {
+        int j = sel_idx[t]; if (j < 0 || j >= (int)L) continue;
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+        float w = expf(dot * scale); denom += w;
+        for (int64_t d = 0; d < D; ++d)
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+        _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 3; _rvv_ctrs.bw += (uint64_t)D * sizeof(float); _rvv_ctrs.mac += (uint64_t)D;
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+}
+
 void sattn_rvv_block_topk_bf16(
     const float* Q,
     const float* K,

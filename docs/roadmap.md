@@ -35,6 +35,9 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - RVV bridge autotune: `sattn_run_rvv_from_mlir.py` now forwards `--autotune` to the runner; test added.
  - RVV metrics snapshot: script `scripts/update_rvv_metrics_table.py` auto-updates a table in `backends/rvv/README.md` with current proxy counters.
  - RoCC sim GQA/comp: MMIO for `gqa_group_size`/`comp_block_size` plus tests asserting iteration changes; testbench prints these in `spec_info`.
+ - MLIR → RVV indices path: block-based specs now emit indices and the RVV runner can consume them via `--indices` (with global token expansion). Added test to exercise the path.
+ - Docs updated: `spec_selection.md` documents precision, GQA/compression knobs and selector influence; `backends/rvv/README.md` includes metrics table and new flags.
+ - Unified artifacts helper: added `compiler/mlir/tools/sattn_emit_artifacts.py` and migrated sim/RVV scripts to use it for indices + desc emission (single source of truth).
  - Grouped-query & compression blocks:
    - RVV: `gqa_group_size` shares selection across heads; `comp_block_size` enables compression-block scoring; bridged from MLIR and exercised in tests.
    - RoCC sim: new MMIOs for `gqa_group_size` and `comp_block_size`; simple latency model reflects their effect; tests assert cycle changes.
@@ -43,7 +46,7 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 ## Remaining Work (prioritized)
 1) MLIR production integration
    - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
-   - Hook indices/BSR masks from IR into emitters; unify text/JSON emission
+   - (Done for RVV runner) Hook indices/BSR masks from IR into RVV; unify text/JSON emission across tools (RoCC sim already consumes desc; indices consumed by RVV)
 2) Multi-spec support and selection
    - Extend `sattn.spec` choices (BLG, N:M, topk_per_query, LSH done); carry through to backends (hooks added; RVV kernels/stubs implemented)
    - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (RVV refs added; RoCC functional checks pending)
@@ -67,7 +70,7 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - Stage 8: Expanded evaluation matrix and plots
 
 ## Next actions (short)
-- MLIR: hook indices/BSR masks from IR into RVV/Sim runners (unify text/JSON emission)
-- Multi-spec: add hardware capability probe and fold into selector; keep tests green
-- RVV: keep compare tests for new kernels; maintain snapshot metrics via script
-- RoCC: refine counters and stub fidelity; keep invariants tests
+ - Multi-spec: add a lightweight hardware capability probe and fold into selector; keep tests green (selector env hints added; HW probe for RoCC surfaced via MMIO)
+ - E2E: maintain unified artifacts flow; add minor cleanup and examples in docs
+ - RVV: on-device run (or precise sim) to collect real cycles; extend metrics table with “on-device” column
+ - RoCC: refine counters and stub fidelity; keep invariants tests

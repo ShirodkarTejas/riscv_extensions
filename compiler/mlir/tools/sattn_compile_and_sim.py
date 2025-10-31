@@ -28,40 +28,10 @@ def main():
         print(f"[warn] sattn-opt unavailable or failed ({e}); using input MLIR directly")
         out_mlir = args.mlir
 
-    # 2) Emit indices.txt
-    run([args.python, 'compiler/mlir/tools/sattn_emit_indices_txt.py', '--in-mlir', out_mlir, '--out-indices', args.indices])
-    # Also emit descriptor to pass sizes to sim
-    desc_txt = os.path.splitext(args.indices)[0] + '.desc'
-    run([args.python, 'compiler/mlir/tools/sattn_emit_desc_txt.py', '--in-mlir', out_mlir, '--out-desc', desc_txt])
-    # Patch-in extra attributes (nm_n, nm_m, lsh_buckets, keep_ratio) if present
-    try:
-        txt2 = open(out_mlir, 'r').read()
-        import re
-        def find_int(name):
-            m = re.search(rf"{name}\\s*=\\s*([0-9]+)", txt2)
-            return int(m.group(1)) if m else None
-        def find_float(name):
-            m = re.search(rf"{name}\\s*=\\s*([0-9]+(?:\\.[0-9]+)?)", txt2)
-            return float(m.group(1)) if m else None
-        updates = {}
-        for key in ['nm_n','nm_m','lsh_buckets','gqa_group_size','comp_block_size']:
-            v = find_int(key)
-            if v is not None: updates[key] = str(v)
-        kr = find_float('keep_ratio')
-        if kr is not None: updates['keep_ratio'] = str(kr)
-        if updates:
-            vals = {}
-            with open(desc_txt, 'r') as f:
-                for line in f:
-                    if '=' in line:
-                        k, v = line.strip().split('=', 1)
-                        vals[k] = v
-            vals.update(updates)
-            with open(desc_txt, 'w') as f:
-                for k in ['m_rows','head_dim_d','block_size','k_blocks','s_tokens','global_tokens','nm_n','nm_m','lsh_buckets','keep_ratio','gqa_group_size','comp_block_size']:
-                    f.write(f"{k}={vals.get(k, '0')}\n")
-    except Exception as _:
-        pass
+    # 2) Emit artifacts via unified helper (indices + desc)
+    out_stem = os.path.splitext(args.indices)[0]
+    run([args.python, 'compiler/mlir/tools/sattn_emit_artifacts.py', '--mlir', out_mlir, '--out-stem', out_stem])
+    desc_txt = out_stem + '.desc'
 
     # 3) Emit a simple descriptor text file for the sim
     # desc_txt = os.path.splitext(args.indices)[0] + '.desc'

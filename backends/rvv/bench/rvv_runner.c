@@ -19,9 +19,11 @@ int main(int argc, char** argv) {
   long gqa_group_size=1, comp_block_size=0;
   int autotune = 0;
   int calibrate = 0;
+  const char* indices_path = NULL;
   long keep_ratio_x1000 = 120; // 0.12
   (void)args(argc, argv, "--spec", &spec);
   (void)args(argc, argv, "--precision", &precision);
+  (void)args(argc, argv, "--indices", &indices_path);
   argi(argc, argv, "--B", &B); argi(argc, argv, "--H", &H); argi(argc, argv, "--L", &L); argi(argc, argv, "--D", &D);
   argi(argc, argv, "--window", &window); argi(argc, argv, "--block_size", &block_size);
   argi(argc, argv, "--global_tokens", &global_tokens); argi(argc, argv, "--nm_n", &nm_n); argi(argc, argv, "--nm_m", &nm_m);
@@ -101,15 +103,25 @@ int main(int argc, char** argv) {
     printf("autotune: spec=block_local_global tile_rows=%d rvv_bytes_read=%llu checksum=%.6f\n", best_tr, (unsigned long long)best_bytes, best_ck);
     free(Q); free(K); free(V); free(O); return 0;
   } else if (strcmp(spec, "block_local_global")==0 || strcmp(spec, "bsr")==0) {
-    sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens, .gqa_group_size=(int)gqa_group_size, .comp_block_size=(int)comp_block_size };
-    if (strcmp(precision, "bf16")==0) {
-      sattn_rvv_block_topk_bf16(Q,K,V,O,s,p);
-    } else if (strcmp(precision, "i8")==0) {
-      sattn_rvv_block_topk_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
-    } else if (strcmp(precision, "i4")==0) {
-      sattn_rvv_block_topk_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    // If indices are provided, override selection
+    if (indices_path) {
+      int cap = (int)L; int *sel = (int*)malloc(sizeof(int)*cap); int sc=0;
+      FILE* f = fopen(indices_path, "r"); if (f) {
+        char buf[128]; while (fgets(buf,sizeof(buf),f)) { int nb = atoi(buf); if (nb < 0) continue; long srow = (long)nb * block_size; long erow = srow + block_size; if (erow > L) erow = L; for (long r=srow; r<erow && sc<cap; ++r) sel[sc++] = (int)r; } fclose(f); }
+      for (int j=0; j<global_tokens && sc<cap; ++j) sel[sc++] = j;
+      sattn_rvv_block_topk_apply_selection(Q,K,V,O,s,(int)block_size, sel, sc);
+      free(sel);
     } else {
-      sattn_rvv_block_topk(Q,K,V,O,s,p);
+      sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens, .gqa_group_size=(int)gqa_group_size, .comp_block_size=(int)comp_block_size };
+      if (strcmp(precision, "bf16")==0) {
+        sattn_rvv_block_topk_bf16(Q,K,V,O,s,p);
+      } else if (strcmp(precision, "i8")==0) {
+        sattn_rvv_block_topk_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+      } else if (strcmp(precision, "i4")==0) {
+        sattn_rvv_block_topk_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+      } else {
+        sattn_rvv_block_topk(Q,K,V,O,s,p);
+      }
     }
   } else if (strcmp(spec, "nm_structured")==0) {
     sattn_nm_params_t p = { .n = (int)nm_n, .m = (int)nm_m };

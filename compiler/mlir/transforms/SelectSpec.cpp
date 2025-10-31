@@ -74,7 +74,10 @@ struct SelectSpecPass : public PassWrapper<SelectSpecPass, OperationPass<ModuleO
       double relSpan = (W > 0) ? double(2 * W + 1) / double(std::max<int64_t>(1, S)) : 1.0;
       double density_sw = (W > 0) ? std::min<double>(1.0, relSpan) : 1.0;
       // Cache-fit heuristic for BSR tiles: bytes per block of Q/K tiles
-      constexpr double L1Bytes = 32.0 * 1024.0;
+      double L1Bytes = 32.0 * 1024.0;
+      if (auto l1 = llvm::sys::Process::GetEnv("SATTN_HW_L1_BYTES")) {
+        double v = 0.0; StringRef s = *l1; (void)s.getAsDouble(v); if (v > 1024.0) L1Bytes = v;
+      }
       double bytesPerBlock = double(BS) * double(D) * 4.0; // fp32 per element
       double cacheFactor = (bytesPerBlock <= L1Bytes) ? 0.9 : 1.1; // favor cache-fitting blocks
       // Relative cost ~ density * S * D * factor
@@ -92,6 +95,9 @@ struct SelectSpecPass : public PassWrapper<SelectSpecPass, OperationPass<ModuleO
       // Env probes: allow disabling one side for HW/impl constraints
       if (llvm::sys::Process::GetEnv("SATTN_DISABLE_BSR")) cost_bsr = std::numeric_limits<double>::infinity();
       if (llvm::sys::Process::GetEnv("SATTN_DISABLE_SW")) cost_sw = std::numeric_limits<double>::infinity();
+      // Hardware preference hints (lightweight probe): nudge costs rather than forcing
+      if (llvm::sys::Process::GetEnv("SATTN_PREFER_BSR")) cost_bsr *= 0.8, cost_sw *= 1.1;
+      if (llvm::sys::Process::GetEnv("SATTN_PREFER_SW")) cost_sw *= 0.8, cost_bsr *= 1.1;
       // If no window, default to BSR; otherwise pick lower cost
       StringRef spec = (W > 0 && cost_sw < cost_bsr) ? StringRef("sliding_window") : StringRef("bsr");
       op->setAttr("spec", StringAttr::get(ctx, spec));

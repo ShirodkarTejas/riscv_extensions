@@ -208,6 +208,12 @@ int main(int argc, char** argv) {
   printf("rocc_counters(proxy): gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
          (unsigned long long)proxy_gcy, (unsigned long long)proxy_mcy, (unsigned long long)proxy_dma);
   printf("spec_info: global_tokens=%u gqa_group_size=%u comp_block_size=%u nm=(%u,%u) lsh_buckets=%u keep_ratio=%.3f\n", GT, GQA_GS, COMP_BS, NMN, NMM, LSHB, KEEP);
+  // Read HW probe
+  uint64_t hw_ver = mmio_read(0x00D8);
+  uint64_t hw_caps = mmio_read(0x00E0);
+  printf("rocc_hw: ver=0x%llx caps=0x%llx [bsr=%d sw=%d gqa=%d comp=%d]\n",
+         (unsigned long long)hw_ver, (unsigned long long)hw_caps,
+         (int)((hw_caps>>0)&1ull),(int)((hw_caps>>1)&1ull),(int)((hw_caps>>2)&1ull),(int)((hw_caps>>3)&1ull));
   // Print simple utilization estimates
   unsigned long long expected_mac = (unsigned long long)M * (unsigned long long)S * (unsigned long long)D;
   double util_mac = expected_mac ? ((double)mcy / (double)expected_mac) : 0.0;

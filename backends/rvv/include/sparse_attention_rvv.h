@@ -132,6 +132,17 @@ void sattn_rvv_block_topk(
     sattn_shape_t shape,
     sattn_blocktopk_params_t params);
 
+// Apply selection using explicit token indices (no scoring), softmax-weighted accumulation.
+void sattn_rvv_block_topk_apply_selection(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    int block_size,
+    const int* sel_idx,
+    int sel_cnt);
+
 // Tiled variant of block_topk (BLG) to improve locality across multiple rows
 void sattn_rvv_block_topk_tiled(
     const float* Q,
