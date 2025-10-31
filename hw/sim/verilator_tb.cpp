@@ -185,6 +185,11 @@ int main(int argc, char** argv) {
   printf("rocc_counters(proxy): gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
          (unsigned long long)proxy_gcy, (unsigned long long)proxy_mcy, (unsigned long long)proxy_dma);
   printf("spec_info: global_tokens=%u nm=(%u,%u) lsh_buckets=%u keep_ratio=%.3f\n", GT, NMN, NMM, LSHB, KEEP);
+  // Print simple utilization estimates
+  unsigned long long expected_mac = (unsigned long long)M * (unsigned long long)S * (unsigned long long)D;
+  double util_mac = expected_mac ? ((double)mcy / (double)expected_mac) : 0.0;
+  double util_gather = ((double)gcy) / ((double)((unsigned long long)S * (unsigned long long)D) + 1e-9);
+  printf("rocc_util: util_mac=%.3f util_gather=%.3f expected_mac=%llu\n", util_mac, util_gather, expected_mac);
   delete top;
   return 0;
 }

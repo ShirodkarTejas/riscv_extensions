@@ -31,8 +31,16 @@ Run the benches on Spike/QEMU or your RVV board:
 ./sattn_rvv_runner --spec sliding_window --L 128 --D 32 --window 8
 ./sattn_rvv_runner --spec sliding_window --L 128 --D 32 --window 8 --tile_rows 4   # tiled variant
 ./sattn_rvv_runner --spec block_local_global --L 128 --D 32 --block_size 64 --keep_x1000 120 --global_tokens 8
+./sattn_rvv_runner --spec block_local_global_tiled --L 128 --D 32 --block_size 64 --keep_x1000 120 --global_tokens 8   # tiled BLG
 ./sattn_rvv_runner --spec nm_structured --L 128 --D 32 --nm_n 2 --nm_m 4
 ./sattn_rvv_runner --spec lsh --L 128 --D 32 --lsh_buckets 8
+
+# Runner prints counters as well:
+# spec=sliding_window checksum=... rvv_bytes_read=... bytes_written=... mac_flops=...
+
+# Simple autotune for tile_rows (minimizes rvv_bytes_read):
+./sattn_rvv_runner --spec sliding_window --L 512 --D 64 --window 16 --autotune
+./sattn_rvv_runner --spec block_local_global --L 512 --D 64 --block_size 64 --keep_x1000 120 --autotune
 ```
 
 Output:

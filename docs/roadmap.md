@@ -29,6 +29,7 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - RVV: added kernels and helpers for SW/TopK (BLG), N:M (wrapper), LSH (bucketed); segmented reductions and softmax-row helpers; CPU references and compare tests all passing.
  - RVV runner and MLIR bridge: `sattn_rvv_runner` dispatches kernels by spec; `sattn_run_rvv_from_mlir.py` lowers, parses `sattn.rvv_call`, and runs the runner; tests for SW/BLG/N:M/LSH pass.
  - RoCC counters refined: per-cycle gather/mac increments and DMA byte counting; pytest asserts non-zero counters.
+ - RVV vectorization (expanded): tiled variants for `sliding_window`, `block_local_global` and `lsh`; runner prints counters and supports `--tile_rows`.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
@@ -39,8 +40,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
    - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (RVV refs added; RoCC functional checks pending)
    - Upgrade selector to a lightweight cost model (extended); add hardware probe; allow override (env/attr overrides added; probe flags minimal)
 3) RVV performance path
-   - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar
-   - Validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches
+   - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar — initial tiled variants done
+   - Add simple autotune hooks in runner (tile_rows sweep); validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches
 4) RoCC compute datapath
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
@@ -57,6 +58,6 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 ## Next actions (short)
 - MLIR: extend per-spec lowering surfaces; keep FileCheck tests green
 - Multi-spec: maintain selector overrides/probes as specs expand; add RoCC-side per-spec semantics
-- RVV: wire autotune hooks into runner; keep compare tests for any new kernels
+- RVV: wire autotune hooks into runner; keep compare tests for any new kernels; document counters output
 - RoCC: refine counters and stub fidelity; add simple utilization invariants in tests
 - E2E: extend runner to accept emitted indices/masks; integrate with roundtrip scripts

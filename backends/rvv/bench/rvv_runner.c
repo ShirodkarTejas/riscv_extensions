@@ -14,6 +14,7 @@ static int args(int argc, char** argv, const char* k, const char** out) {
 int main(int argc, char** argv) {
   const char* spec = "sliding_window";
   long B=1,H=1,L=128,D=32, window=8, block_size=64, global_tokens=0, nm_n=0, nm_m=0, lsh_buckets=0, tile_rows=0;
+  int autotune = 0;
   long keep_ratio_x1000 = 120; // 0.12
   (void)args(argc, argv, "--spec", &spec);
   argi(argc, argv, "--B", &B); argi(argc, argv, "--H", &H); argi(argc, argv, "--L", &L); argi(argc, argv, "--D", &D);
@@ -21,19 +22,48 @@ int main(int argc, char** argv) {
   argi(argc, argv, "--global_tokens", &global_tokens); argi(argc, argv, "--nm_n", &nm_n); argi(argc, argv, "--nm_m", &nm_m);
   argi(argc, argv, "--lsh_buckets", &lsh_buckets); argi(argc, argv, "--keep_x1000", &keep_ratio_x1000);
   argi(argc, argv, "--tile_rows", &tile_rows);
+  for (int i=1;i<argc;++i) if (strcmp(argv[i], "--autotune")==0) autotune = 1;
   sattn_shape_t s = { .B = B, .H = H, .L = L, .D = D };
   size_t elems = (size_t)B * H * L * D;
   float *Q=(float*)malloc(elems*sizeof(float)), *K=(float*)malloc(elems*sizeof(float)), *V=(float*)malloc(elems*sizeof(float));
   float *O=(float*)malloc(elems*sizeof(float));
   if(!Q||!K||!V||!O) return 2;
   for (size_t i = 0; i < elems; ++i) { Q[i] = sinf((float)i*0.01f); K[i] = cosf((float)i*0.02f); V[i] = sinf((float)i*0.03f); }
-  if (strcmp(spec, "sliding_window")==0) {
+  if (strcmp(spec, "sliding_window")==0 && autotune) {
+    int candidates[] = {1,2,4,8}; size_t nc = sizeof(candidates)/sizeof(candidates[0]);
+    unsigned long long best_bytes = ~0ull; int best_tr = 1; double best_ck = 0.0;
+    for (size_t ci=0; ci<nc; ++ci) {
+      int tr = candidates[ci]; if (tr > L) continue;
+      sattn_rvv_counters_reset();
+      sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size };
+      if (tr > 1) sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,tr); else sattn_rvv_sliding_global(Q,K,V,O,s,p);
+      sattn_rvv_counters_t ctr; sattn_rvv_counters_get(&ctr);
+      double acc=0.0; for (size_t i=0;i<elems;++i) acc += O[i];
+      if (ctr.bytes_read < best_bytes) { best_bytes = ctr.bytes_read; best_tr = tr; best_ck = acc; }
+    }
+    printf("autotune: spec=sliding_window tile_rows=%d rvv_bytes_read=%llu checksum=%.6f\n", best_tr, (unsigned long long)best_bytes, best_ck);
+    free(Q); free(K); free(V); free(O); return 0;
+  } else if (strcmp(spec, "sliding_window")==0) {
     sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size };
     if (tile_rows > 1) {
       sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,(int)tile_rows);
     } else {
       sattn_rvv_sliding_global(Q,K,V,O,s,p);
     }
+  } else if ((strcmp(spec, "block_local_global")==0 || strcmp(spec, "bsr")==0) && autotune) {
+    int candidates[] = {1,2,4,8}; size_t nc = sizeof(candidates)/sizeof(candidates[0]);
+    unsigned long long best_bytes = ~0ull; int best_tr = 1; double best_ck = 0.0;
+    for (size_t ci=0; ci<nc; ++ci) {
+      int tr = candidates[ci]; if (tr > L) continue;
+      sattn_rvv_counters_reset();
+      sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens };
+      if (tr > 1) sattn_rvv_block_topk_tiled(Q,K,V,O,s,p,tr); else sattn_rvv_block_topk(Q,K,V,O,s,p);
+      sattn_rvv_counters_t ctr; sattn_rvv_counters_get(&ctr);
+      double acc=0.0; for (size_t i=0;i<elems;++i) acc += O[i];
+      if (ctr.bytes_read < best_bytes) { best_bytes = ctr.bytes_read; best_tr = tr; best_ck = acc; }
+    }
+    printf("autotune: spec=block_local_global tile_rows=%d rvv_bytes_read=%llu checksum=%.6f\n", best_tr, (unsigned long long)best_bytes, best_ck);
+    free(Q); free(K); free(V); free(O); return 0;
   } else if (strcmp(spec, "block_local_global")==0 || strcmp(spec, "bsr")==0) {
     sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=(int)global_tokens };
     sattn_rvv_block_topk(Q,K,V,O,s,p);
