@@ -102,6 +102,16 @@ void sattn_rvv_lsh(
     sattn_shape_t shape,
     sattn_lsh_params_t params);
 
+// Tiled variant of LSH selection
+void sattn_rvv_lsh_tiled(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params,
+    int tile_rows);
+
 // Segmented reductions: sum across contiguous segments of length seg_len.
 // src: [segments, seg_len], dst: [segments]
 void sattn_rvv_segmented_sum_f32(const float* src, float* dst,

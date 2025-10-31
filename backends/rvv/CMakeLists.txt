@@ -43,5 +43,7 @@ add_executable(sattn_rvv_compare_sw_tiled bench/compare_sw_tiled_ref.c)
 target_link_libraries(sattn_rvv_compare_sw_tiled PRIVATE sattn_rvv m)
 add_executable(sattn_rvv_compare_blocktopk_tiled bench/compare_blocktopk_tiled_ref.c)
 target_link_libraries(sattn_rvv_compare_blocktopk_tiled PRIVATE sattn_rvv m)
+add_executable(sattn_rvv_compare_lsh_tiled bench/compare_lsh_tiled_ref.c)
+target_link_libraries(sattn_rvv_compare_lsh_tiled PRIVATE sattn_rvv m)
 
 
