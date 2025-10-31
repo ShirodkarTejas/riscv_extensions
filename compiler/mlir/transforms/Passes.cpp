@@ -24,8 +24,10 @@ static mlir::PassPipelineRegistration<> SattnLowerRoCC(
 
 static mlir::PassPipelineRegistration<> SattnLowerRVV(
     "sattn-lower-rvv",
-    "Annotate RVV path with vectorize+bufferize (placeholder)",
+    "Lower sattn.sparse_attention to sattn.rvv_call then vectorize+bufferize",
     [](mlir::OpPassManager &pm) {
+      pm.addPass(createSelectSpecPass());
+      pm.addPass(createLowerToRVVPass());
       pm.addPass(createVectorizePass());
       pm.addPass(createBufferizePass());
     });

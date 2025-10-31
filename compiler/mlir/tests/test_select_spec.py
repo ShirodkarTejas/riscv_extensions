@@ -18,7 +18,7 @@ def test_select_sliding_window():
         print('[skip] sattn-opt not found; skipping')
         return
     src = r'''module {
-  "sattn.sparse_attention"() { window_size = 256 : i64, tile_M = 16 : i64, tile_D = 32 : i64, tile_S = 64 : i64 } : () -> ()
+  "sattn.sparse_attention"() { window_size = 15 : i64, tile_M = 16 : i64, tile_D = 32 : i64, tile_S = 64 : i64 } : () -> ()
 }
 '''
     out = run(tool, src)

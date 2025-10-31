@@ -20,15 +20,16 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - RoCC: index RAM + Q/K scratchpads + spdot/softmax/spmm stubs with checksums; counters wired to toggle events; harness reads non-zero MMIO counters.
 - MLIR: CMake wiring against system LLVM/MLIR; `sattn-opt` minimal tool built and smoke-tested; compile+sim script added with fallback.
 - Tooling: descriptor emission fixed; indices emitter corrected; Docker image updated to build and run all flows.
+ - Multi-spec: added SelectSpec pass with simple cost model (window span threshold) and pipelines registered in `sattn-opt`; tests added for RoCC/RVV flows.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
-   - Reinstate real passes in `sattn-opt` (materialize-indices, tiling/vectorize/bufferize, lower-to-{rvv,rocc}); add FileCheck tests
+   - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
    - Hook indices/BSR masks from IR into emitters; unify text/JSON emission
 2) Multi-spec support and selection
-   - Add `sattn.spec` enum (BSR, sliding_window, block_local_global, N:M structured, topk_per_query, LSH)
+   - Extend `sattn.spec` choices (block_local_global, N:M, topk_per_query, LSH); carry through to backends
    - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification
-   - Implement a simple cost model + hardware capability probe to auto-select spec; allow user override
+   - Upgrade selector to a lightweight cost model (S,D,window,density,cache-fit) and hardware probe; allow override
 3) RVV performance path
    - Complete segmented reductions and gather/scatter coverage across specs; vector dot and tile softmax
    - Validate on Spike/QEMU-RVV or dev board; add bandwidth/compute counters to benches
