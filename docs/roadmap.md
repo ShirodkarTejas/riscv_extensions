@@ -5,40 +5,40 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 ## Done (MVP)
 - CPU reference kernels; tests vs dense; randomized tests
 - GPU: Triton sliding-window; block-topk via Triton gather + Torch prepass; CUDA tests
-- RVV: baseline scalar implementation + cycles harness
+- RVV: baseline scalar implementation + cycles harness; initial RVV gather/scatter helpers and block reductions
 - MLIR: `sattn` dialect + example; pass emulator tool (`sattn_opt.py`) and docs
 - RoCC: MMIO RTL skeleton; Verilator harness; runtime driver; spdot_bsr issue path
 - IMC: proxy mapping tool producing sparse vs dense estimates
 - Bench: microbench, autotune, eval
 - Docs: quickstart, profiles, shapes/contract, scope decisions
+ - Docker: dev image with Verilator + LLVM/MLIR 18 (Ubuntu 24.04) and Python venv
+ - Build: minimal `sattn-opt` built against system MLIR; optional pass test (smoke) wired
+ - E2E: `sattn_compile_and_sim.py` with auto-fallback, emits indices/desc and runs Verilator sim
 
 ## Recent progress (since last update)
-- RVV: sliding-window inner math vectorized with RVV; block_topk baseline added; new cycles bench for both paths.
-- RoCC: added index RAM, dual scratchpads (Q/K), gather→scratchpad→MAC core with checksum; Verilator harness accepts index files.
-- MLIR: implemented initial passes (materialize-indices, tiling hints, fuse-softmax, lower-to-rvv/rocc), CMake integration, and `sattn-opt` tool; added `sattn_emit_rocc.py` to emit demo descriptors from MLIR.
-- MLIR lowering ops: added `sattn.rocc_call` and `sattn.rvv_call` and a lowering pass that replaces `sattn.sparse_attention` with these call sites to carry descriptors/tiles.
-- Sim verification: TB now computes an expected checksum and prints PASS/MISMATCH for small tiles; supports file-driven indices for BSR paths.
-- RVV runner: CLI bench `sattn_rvv_bench_cli` and `sattn_emit_rvv.py` to run RVV from MLIR; one-command RoCC pipeline `sattn_compile_and_sim.py`.
+- RVV: vectorized helpers for gather/scatter and block reductions; cycles bench updated.
+- RoCC: index RAM + Q/K scratchpads + spdot/softmax/spmm stubs with checksums; counters wired to toggle events; harness reads non-zero MMIO counters.
+- MLIR: CMake wiring against system LLVM/MLIR; `sattn-opt` minimal tool built and smoke-tested; compile+sim script added with fallback.
+- Tooling: descriptor emission fixed; indices emitter corrected; Docker image updated to build and run all flows.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
-   - Implement real tiling/vectorization/bufferization and backend-specific ops/calls (RVV vectors, RoCC descriptor emission); add pass tests
-   - Hook indices/BSR masks from IR into emitters; unify JSON/text emission paths
-2) RVV performance path
-   - Replace scalar loops with RVV intrinsics (vector dot, segmented reductions, tile softmax)
-   - Validate on Spike/QEMU-RVV or dev board; add counters for bandwidth/energy proxy
-3) RoCC compute datapath
-   - Implement spdot_bsr pipeline with gather/DMA and MAC array; tile-local softmax_fused; spmm_bsr
-   - End-to-end compare to CPU reference (per-tile checks); utilization and DMA efficiency profiling
-4) Training + quantization
-   - Backward pass for key paths; gradient tests; bf16/fp16 numerics
-   - Int8 PTQ (KL/percentile calibration); optional int4 for V path
-5) GPU selection path
-   - Move block_topk selection from Torch prepass to Triton (topk_idx) or fused approach
+   - Reinstate real passes in `sattn-opt` (materialize-indices, tiling/vectorize/bufferize, lower-to-{rvv,rocc}); add FileCheck tests
+   - Hook indices/BSR masks from IR into emitters; unify text/JSON emission
+2) Multi-spec support and selection
+   - Add `sattn.spec` enum (BSR, sliding_window, block_local_global, N:M structured, topk_per_query, LSH)
+   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification
+   - Implement a simple cost model + hardware capability probe to auto-select spec; allow user override
+3) RVV performance path
+   - Complete segmented reductions and gather/scatter coverage across specs; vector dot and tile softmax
+   - Validate on Spike/QEMU-RVV or dev board; add bandwidth/compute counters to benches
+4) RoCC compute datapath
+   - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
+   - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
+5) Additional sparse attention types
+   - Sliding-window/dilated; block-local + global tokens; N:M structured; top-k per query; LSH/hashed buckets; (optional) ring/landmark
 6) Packaging/UX
-   - Real CLI for profiles/specs; Python packaging (pyproject); CI for CPU (CUDA optional)
-7) Additional patterns (optional)
-   - BigBird-style variations; softmax-free experiments
+   - CLI for profiles/specs and selection; Python packaging; CI for CPU (CUDA optional) and sim
 
 ## Milestone tracking
 - Stage 3–5 focus: RVV vectorization and one RoCC primitive in RTL with sim match to CPU
@@ -46,8 +46,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - Stage 8: Expanded evaluation matrix and plots
 
 ## Next actions (short)
-- RoCC: add simple address generation from index RAM (BSR decode stub) to drive gather addresses; keep checksum for verification.
-- MLIR: extend lowering to emit indices/CSR descriptors matching the RoCC programmer’s model; add a small test that round-trips MLIR → indices → sim.
-- RVV: implement segmented reductions and a gather/scatter helper for block_topk.
-- GPU: replace Torch prepass with Triton top-k selection.
-- Evaluation: add small end-to-end checks from MLIR configs for both RVV and RoCC flows.
+- MLIR: restore real `sattn-opt` passes and add FileCheck tests; wire pass CI target
+- Multi-spec: add `sattn.spec` attribute and support BSR + sliding_window end-to-end; add a simple selector
+- RVV: finish segmented reductions + gather/scatter coverage; add e2e tests for the RVV path
+- RoCC: keep counters and checksums; incrementally refine gather/DMA/MAC timing
+- E2E: add a test target invoking `sattn_compile_and_sim.py` with sample MLIR and asserting PASS

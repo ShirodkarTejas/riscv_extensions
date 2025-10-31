@@ -1,26 +1,34 @@
 #include "transforms/Passes.h"
 
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassRegistry.h"
 
 namespace mlir {
 namespace sattn {
 
-void registerPasses() {
-  registerPass("sattn-materialize-indices", "Materialize sparse indices",
-               [] { return createMaterializeIndicesPass(); });
-  registerPass("sattn-tile", "Set tiling hints",
-               [] { return createTilePass(); });
-  registerPass("sattn-fuse-softmax", "Fuse scale+mask+softmax",
-               [] { return createFuseSoftmaxPass(); });
-  registerPass("sattn-lower-to-rvv", "Lower to RVV backend",
-               [] { return createLowerToRVVPass(); });
-  registerPass("sattn-lower-to-rocc", "Lower to RoCC backend",
-               [] { return createLowerToRoCCPass(); });
-  registerPass("sattn-vectorize", "Vectorize RVV call",
-               [] { return createVectorizePass(); });
-  registerPass("sattn-bufferize", "Bufferize calls",
-               [] { return createBufferizePass(); });
-}
+void registerPasses() {}
+
+// Expose pipelines instead of individual pass flags for stability across MLIR
+static mlir::PassPipelineRegistration<> SattnLowerRoCC(
+    "sattn-lower-rocc",
+    "Lower sattn.sparse_attention to sattn.rocc_call with materialized indices, tiling, and softmax fusion",
+    [](mlir::OpPassManager &pm) {
+      pm.addPass(createSelectSpecPass());
+      pm.addPass(createMaterializeIndicesPass());
+      pm.addPass(createTilePass());
+      pm.addPass(createFuseSoftmaxPass());
+      pm.addPass(createLowerToRoCCPass());
+      pm.addPass(createBufferizePass());
+    });
+
+static mlir::PassPipelineRegistration<> SattnLowerRVV(
+    "sattn-lower-rvv",
+    "Annotate RVV path with vectorize+bufferize (placeholder)",
+    [](mlir::OpPassManager &pm) {
+      pm.addPass(createVectorizePass());
+      pm.addPass(createBufferizePass());
+    });
 
 } // namespace sattn
 } // namespace mlir

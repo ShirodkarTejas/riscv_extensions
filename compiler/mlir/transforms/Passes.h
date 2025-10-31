@@ -11,6 +11,7 @@ namespace sattn {
 void registerPasses();
 
 std::unique_ptr<Pass> createMaterializeIndicesPass();
+std::unique_ptr<Pass> createSelectSpecPass();
 std::unique_ptr<Pass> createTilePass();
 std::unique_ptr<Pass> createFuseSoftmaxPass();
 std::unique_ptr<Pass> createLowerToRVVPass();

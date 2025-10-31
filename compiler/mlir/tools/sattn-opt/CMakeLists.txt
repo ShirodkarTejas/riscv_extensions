@@ -6,6 +6,7 @@ target_link_libraries(sattn-opt PRIVATE
   MLIRSupport
   MLIRParser
   MLIROptLib
+  MLIRFuncDialect
 )
 
 

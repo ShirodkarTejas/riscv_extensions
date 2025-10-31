@@ -1,4 +1,5 @@
 set(SATTN_TRANSFORMS_SRC
+  SelectSpec.cpp
   MaterializeIndices.cpp
   Tile.cpp
   FuseSoftmax.cpp
@@ -6,11 +7,10 @@ set(SATTN_TRANSFORMS_SRC
   LowerToRoCC.cpp
   Vectorize.cpp
   Bufferize.cpp
-)
-
-set(LLVM_OPTIONAL_SOURCES
   Passes.cpp
 )
+
+set(LLVM_OPTIONAL_SOURCES)
 
 add_mlir_library(SattnTransforms
   ${SATTN_TRANSFORMS_SRC}
