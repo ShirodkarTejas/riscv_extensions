@@ -613,6 +613,9 @@ void sattn_rvv_block_topk(
           for (int64_t j = s; j < e; ++j) {
             for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b, h, i, d, B, H, L, D)] * K[offset_bhld(b, h, j, d, B, H, L, D)];
           }
+          // Proxy counters: read Q once (D) and K cnt*D, perform cnt*D FMAs
+          _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * sizeof(float) + (uint64_t)D * sizeof(float);
+          _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
 #endif
           block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f;
           block_idx[nb] = (int)nb;
@@ -669,9 +672,15 @@ void sattn_rvv_block_topk(
           int j = sel_idx[t];
           float dot = 0.f;
           for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b, h, i, d, B, H, L, D)] * K[offset_bhld(b, h, j, d, B, H, L, D)];
+          // Proxy counters for dot
+          _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2;
+          _rvv_ctrs.mac += (uint64_t)D;
           float w = expf(dot * scale);
           denom += w;
           for (int64_t d = 0; d < D; ++d) O[offset_bhld(b, h, i, d, B, H, L, D)] += w * V[offset_bhld(b, h, j, d, B, H, L, D)];
+          // Proxy counters for axpy
+          _rvv_ctrs.br += (uint64_t)D * sizeof(float);
+          _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
         }
 #endif
         free(sel_idx);
@@ -892,6 +901,8 @@ void sattn_rvv_block_topk_tiled(
           _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
 #else
           for (int64_t j = s; j < e; ++j) for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+          _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * sizeof(float) + (uint64_t)D * sizeof(float);
+          _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
 #endif
           block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
         }
@@ -920,7 +931,17 @@ void sattn_rvv_block_topk_tiled(
         }
         if (K_sel) free(K_sel); if (V_sel) free(V_sel);
 #else
-        for (int t = 0; t < sel_cnt; ++t) { int j = sel_idx[t]; float dot = 0.f; for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)]; float w = expf(dot * scale); denom += w; for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)]; }
+        for (int t = 0; t < sel_cnt; ++t) {
+          int j = sel_idx[t];
+          float dot = 0.f;
+          for (int64_t d = 0; d < D; ++d) dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * K[offset_bhld(b,h,j,d,B,H,L,D)];
+          _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2;
+          _rvv_ctrs.mac += (uint64_t)D;
+          float w = expf(dot * scale); denom += w;
+          for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+          _rvv_ctrs.br += (uint64_t)D * sizeof(float);
+          _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+        }
 #endif
         free(sel_idx);
         float inv = 1.f / (denom + 1e-12f);
