@@ -1,0 +1,24 @@
+#ifndef SATTN_COMPILER_MLIR_TRANSFORMS_PASSES_H_
+#define SATTN_COMPILER_MLIR_TRANSFORMS_PASSES_H_
+
+#include <memory>
+
+namespace mlir {
+class Pass;
+
+namespace sattn {
+
+void registerPasses();
+
+std::unique_ptr<Pass> createMaterializeIndicesPass();
+std::unique_ptr<Pass> createTilePass();
+std::unique_ptr<Pass> createFuseSoftmaxPass();
+std::unique_ptr<Pass> createLowerToRVVPass();
+std::unique_ptr<Pass> createLowerToRoCCPass();
+
+}  // namespace sattn
+}  // namespace mlir
+
+#endif  // SATTN_COMPILER_MLIR_TRANSFORMS_PASSES_H_
+
+

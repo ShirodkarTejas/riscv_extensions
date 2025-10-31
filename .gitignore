@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.env/
+.pytest_cache/
+
+# Editors/IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+
+# Verilator
+obj_dir/
+*.vcd
+logs/
+
+# Bench results
+bench/results/
+imc/neurosim/results_sparse_vs_dense.csv
+
+# Autotune outputs
+bench/configs/best/*.json
+
+# Notebooks
+*.ipynb_checkpoints/

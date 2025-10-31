@@ -1,0 +1,28 @@
+model:
+  name: llm_small
+  d_model: 1024
+  n_head: 16
+  head_dim: 64
+
+sequence:
+  length: 8192
+
+attention:
+  pattern: block_topk
+  params:
+    block_size: 64
+    keep_ratio: 0.12
+    global_tokens: 16
+
+precision:
+  modes: [bf16, fp16]
+  dense_fallback: true
+
+training: false
+
+benchmarks:
+  run_latency: true
+  run_energy_proxy: true
+  run_accuracy_sanity: true
+
+

@@ -1,0 +1,27 @@
+model:
+  name: vit_block
+  d_model: 768
+  n_head: 12
+  head_dim: 64
+
+sequence:
+  length: 2048
+
+attention:
+  pattern: sliding_global
+  params:
+    window_size: 512
+    global_tokens: 16
+
+precision:
+  modes: [bf16, fp16]
+  dense_fallback: true
+
+training: false
+
+benchmarks:
+  run_latency: true
+  run_energy_proxy: true
+  run_accuracy_sanity: true
+
+
