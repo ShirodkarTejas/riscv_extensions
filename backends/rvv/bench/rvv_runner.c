@@ -17,6 +17,7 @@ int main(int argc, char** argv) {
   float scale_q = 0.05f, scale_k = 0.05f, scale_v = 0.05f;
   long B=1,H=1,L=128,D=32, window=8, block_size=64, global_tokens=0, nm_n=0, nm_m=0, lsh_buckets=0, tile_rows=0;
   int autotune = 0;
+  int calibrate = 0;
   long keep_ratio_x1000 = 120; // 0.12
   (void)args(argc, argv, "--spec", &spec);
   (void)args(argc, argv, "--precision", &precision);
@@ -31,13 +32,31 @@ int main(int argc, char** argv) {
     if (argi(argc, argv, "--scale_k_x1000", &tmp)) scale_k = (float)tmp / 1000.0f;
     if (argi(argc, argv, "--scale_v_x1000", &tmp)) scale_v = (float)tmp / 1000.0f;
   }
-  for (int i=1;i<argc;++i) if (strcmp(argv[i], "--autotune")==0) autotune = 1;
+  for (int i=1;i<argc;++i) {
+    if (strcmp(argv[i], "--autotune")==0) autotune = 1;
+    if (strcmp(argv[i], "--calibrate")==0) calibrate = 1;
+  }
   sattn_shape_t s = { .B = B, .H = H, .L = L, .D = D };
   size_t elems = (size_t)B * H * L * D;
   float *Q=(float*)malloc(elems*sizeof(float)), *K=(float*)malloc(elems*sizeof(float)), *V=(float*)malloc(elems*sizeof(float));
   float *O=(float*)malloc(elems*sizeof(float));
   if(!Q||!K||!V||!O) return 2;
   for (size_t i = 0; i < elems; ++i) { Q[i] = sinf((float)i*0.01f); K[i] = cosf((float)i*0.02f); V[i] = sinf((float)i*0.03f); }
+
+  if (calibrate) {
+    // Compute per-tensor max-abs and emit recommended symmetric per-tensor scales
+    float maxq = 0.f, maxk = 0.f, maxv = 0.f;
+    for (size_t i = 0; i < elems; ++i) { float a=fabsf(Q[i]); if (a>maxq) maxq=a; }
+    for (size_t i = 0; i < elems; ++i) { float a=fabsf(K[i]); if (a>maxk) maxk=a; }
+    for (size_t i = 0; i < elems; ++i) { float a=fabsf(V[i]); if (a>maxv) maxv=a; }
+    int use4 = (strcmp(precision, "i4")==0);
+    float denom = use4 ? 7.0f : 127.0f;
+    if (maxq <= 0) maxq = 1.f; if (maxk <= 0) maxk = 1.f; if (maxv <= 0) maxv = 1.f;
+    float sq = maxq/denom, sk = maxk/denom, sv = maxv/denom;
+    printf("calibrate: precision=%s scale_q=%.6f scale_k=%.6f scale_v=%.6f scale_q_x1000=%d scale_k_x1000=%d scale_v_x1000=%d\n",
+           use4?"i4":"i8", sq, sk, sv, (int)lrintf(sq*1000.f), (int)lrintf(sk*1000.f), (int)lrintf(sv*1000.f));
+    free(Q); free(K); free(V); free(O); return 0;
+  }
   if (strcmp(spec, "sliding_window")==0 && autotune) {
     int candidates[] = {1,2,4,8}; size_t nc = sizeof(candidates)/sizeof(candidates[0]);
     unsigned long long best_bytes = ~0ull; int best_tr = 1; double best_ck = 0.0;

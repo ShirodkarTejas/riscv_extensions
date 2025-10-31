@@ -78,6 +78,17 @@ module {
 }
 ```
 
+### Calibrating scales
+
+To derive symmetric per-tensor scales (`i8`/`i4`) from synthetic data consistent with the RVV runner (sine/cosine initialization), use the calibration tool:
+
+```
+/opt/venv/bin/python compiler/mlir/tools/sattn_calibrate_scales.py --mlir input.mlir --precision i8
+# Output: calibrate: precision=i8 scale_q=... scale_k=... scale_v=... scale_q_x1000=... ...
+```
+
+You can then add `scale_q/scale_k/scale_v` to your MLIR or pass `--scale_*_x1000` to the runner.
+
 - End-to-end compile+sim wrapper:
 ```
 /opt/venv/bin/python compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir
