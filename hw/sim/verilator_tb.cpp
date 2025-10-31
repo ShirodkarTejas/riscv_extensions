@@ -44,17 +44,36 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Program descriptor (use smaller tile for check)
-  mmio_write(0x0030, 4);  // m_rows
-  mmio_write(0x0038, 16); // head_dim_d
-  mmio_write(0x0040, 4);  // block_size
-  mmio_write(0x0048, 4);  // k_blocks
-  mmio_write(0x0050, 16); // s_tokens
+  // Program descriptor (defaults; can be overridden by desc file)
+  uint32_t M = 4, D = 16, BS = 4, KB = 4, S = 16;
+  // Optionally read a descriptor file passed as argv[2]: key=value per line
+  if (argc > 2) {
+    FILE* df = fopen(argv[2], "r");
+    if (df) {
+      char buf[128];
+      while (fgets(buf, sizeof(buf), df)) {
+        char key[64]; int val;
+        if (sscanf(buf, "%63[^=]=%d", key, &val) == 2) {
+          if (!strcmp(key, "m_rows")) M = (uint32_t)val;
+          else if (!strcmp(key, "head_dim_d")) D = (uint32_t)val;
+          else if (!strcmp(key, "block_size")) BS = (uint32_t)val;
+          else if (!strcmp(key, "k_blocks")) KB = (uint32_t)val;
+          else if (!strcmp(key, "s_tokens")) S = (uint32_t)val;
+        }
+      }
+      fclose(df);
+    }
+  }
+  mmio_write(0x0030, M);
+  mmio_write(0x0038, D);
+  mmio_write(0x0040, BS);
+  mmio_write(0x0048, KB);
+  mmio_write(0x0050, S);
   mmio_write(0x0060, 0x14); // CMD_SPDOT_BSR
 
   // Poll for completion
   int iters = 0;
-  while (iters < 100) {
+  while (iters < 10000) {
     uint64_t st = mmio_read(0x0060);
     bool done = (st & 1ull) != 0ull;
     bool busy = (st & 2ull) != 0ull;
@@ -68,7 +87,7 @@ int main(int argc, char** argv) {
   // Compute expected checksum to validate for small tiles
   // Read back params
   auto rd32 = [&](uint64_t addr){ return (uint32_t)mmio_read(addr); };
-  uint32_t M = rd32(0x0030), D = rd32(0x0038), BS = rd32(0x0040), S = rd32(0x0050);
+  M = rd32(0x0030); D = rd32(0x0038); BS = rd32(0x0040); S = rd32(0x0050);
   // Load block indices from file if provided, otherwise ramp 0..K-1
   int idx_count = (S + (BS ? BS : 1) - 1) / (BS ? BS : 1);
   int *blk_ids = (int*)malloc(sizeof(int) * (idx_count > 0 ? idx_count : 1));
@@ -108,6 +127,27 @@ int main(int argc, char** argv) {
   const char* verdict = (expected == sum_lo) ? "PASS" : "MISMATCH";
   printf("expected=0x%llx -> %s\n", expected, verdict);
   free(blk_ids);
+
+  // Issue softmax_fused (0x15) and validate stub checksum: sum of (i_row + s_tok) over M x S
+  mmio_write(0x0060, 0x15); // CMD_SOFTMAX_FUS
+  iters = 0; while (iters < 10000) { uint64_t st = mmio_read(0x0060); if (st & 1ull) break; step(top,1); ++iters; }
+  uint64_t sof_sum = mmio_read(0x0080);
+  unsigned long long sof_expected = 0ull;
+  for (uint32_t row = 0; row < M; ++row) for (uint32_t t = 0; t < S; ++t) sof_expected += (unsigned long long)(row + t);
+  printf("softmax_fused checksum=0x%llx expected=0x%llx -> %s\n",
+         (unsigned long long)sof_sum, sof_expected, (sof_sum == sof_expected ? "PASS" : "MISMATCH"));
+
+  // Issue spmm_bsr (0x16) and validate stub checksum: sum of (i_row + s_tok + d_dim) over M x S x D
+  mmio_write(0x0060, 0x16); // CMD_SPMM_BSR
+  iters = 0; while (iters < 10000) { uint64_t st = mmio_read(0x0060); if (st & 1ull) break; step(top,1); ++iters; }
+  uint64_t spm_sum = mmio_read(0x0088);
+  unsigned long long spm_expected = 0ull;
+  for (uint32_t row = 0; row < M; ++row)
+    for (uint32_t t = 0; t < S; ++t)
+      for (uint32_t k = 0; k < D; ++k)
+        spm_expected += (unsigned long long)(row + t + k);
+  printf("spmm_bsr checksum=0x%llx expected=0x%llx -> %s\n",
+         (unsigned long long)spm_sum, spm_expected, (spm_sum == spm_expected ? "PASS" : "MISMATCH"));
   delete top;
   return 0;
 }

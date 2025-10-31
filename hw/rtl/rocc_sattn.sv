@@ -57,6 +57,7 @@ module rocc_sattn #(
 
   logic [7:0] cmd_reg;
   logic       start_pulse;
+  assign start_pulse = 1'b0;
   logic [63:0] acc_sum;
 
   // Simple ready/done FSM
@@ -73,15 +74,20 @@ module rocc_sattn #(
   spdot_bsr_core u_spdot (
     .clk(clk), .rstn(rstn),
     .start(core_start),
-    .m_rows(m_rows[15:0]), .head_dim_d(head_dim_d[15:0]), .s_tokens(s_tokens[15:0]),
+    .m_rows(m_rows[15:0]), .head_dim_d(head_dim_d[15:0]), .s_tokens(s_tokens[15:0]), .block_size(block_size[15:0]),
     .q_raddr(q_raddr), .q_rdata(q_rdata),
     .k_raddr(k_raddr), .k_rdata(k_rdata),
+    .idx_rd_addr(core_idx_addr), .idx_rd_data(idx_rd_data),
     .busy(core_busy), .done(core_done), .checksum_out(core_sum)
   );
 
-  logic [63:0] core_sum;
-  logic [63:0] sof_sum;
-  logic [63:0] spm_sum;
+  wire [63:0] core_sum;
+  wire [63:0] sof_sum;
+  wire [63:0] spm_sum;
+  /* verilator lint_off UNUSED */
+  logic unused_tie;
+  assign unused_tie = mmio_ren ^ start_pulse ^ core_busy ^ g_busy ^ sof_busy ^ spm_busy;
+  /* verilator lint_on UNUSED */
 
   // gather stub
   logic g_start, g_busy, g_done;
@@ -95,9 +101,11 @@ module rocc_sattn #(
   logic [31:0] q_rdata, k_rdata;
   // index RAM interface
   logic [15:0] idx_rd_addr;
+  logic [15:0] core_idx_addr;
   logic [15:0] idx_rd_data;
   gather2d_stub u_gather (
     .clk(clk), .rstn(rstn), .start(g_start), .s_tokens(s_tokens[15:0]), .head_dim_d(head_dim_d[15:0]), .block_size(block_size[15:0]),
+    .stride_d(16'd1), .stride_t(16'd1),
     .q_wen(q_wen), .q_waddr(q_waddr), .q_wdata(q_wdata),
     .k_wen(k_wen), .k_waddr(k_waddr), .k_wdata(k_wdata),
     .idx_rd_addr(idx_rd_addr), .idx_rd_data(idx_rd_data),
@@ -116,9 +124,12 @@ module rocc_sattn #(
   logic        idx_wen;
   logic [15:0] idx_waddr;
   logic [15:0] idx_wdata;
+  // Mux read port between gather and core
+  logic [15:0] idx_raddr_mux;
+  assign idx_raddr_mux = (state == GATHER) ? idx_rd_addr : core_idx_addr;
   idx_ram #(.ADDR_WIDTH(16), .DATA_WIDTH(16)) u_idx (
     .clk(clk), .rstn(rstn), .wen(idx_wen), .waddr(idx_waddr), .wdata(idx_wdata),
-    .raddr(idx_rd_addr), .rdata(idx_rd_data)
+    .raddr(idx_raddr_mux), .rdata(idx_rd_data)
   );
 
   // softmax fused stub
@@ -210,12 +221,13 @@ module rocc_sattn #(
       run_cnt <= '0; run_len <= 16'd16;
     end else begin
       if (state == IDLE && cmd_seen && cmd_reg != CMD_NOP) begin
-        // crude latency model: function of m_rows, head_dim, s_tokens
-        run_len <= (m_rows[7:0] + head_dim_d[7:0] + s_tokens[7:0]);
+        // crude latency model: function of m_rows, head_dim, s_tokens (widen to 16b)
+        run_len <= (m_rows[15:0] + head_dim_d[15:0] + s_tokens[15:0]);
         if (run_len == 16'd0) run_len <= 16'd16;
       end
       if (state == RUN) run_cnt <= run_cnt + 16'd1; else run_cnt <= '0;
-      if (state == RUN && is_spdot && core_done) acc_sum <= core_sum;
+      // Latch core checksum after entering DONE to allow child to register its output
+      if (state == DONE && is_spdot) acc_sum <= core_sum;
     end
   end
 
@@ -247,11 +259,11 @@ module rocc_sattn #(
                end
               end
       RUN:   begin
-               if (is_spdot) begin
-                 if (core_done) state_n = DONE;
-               } else if (cmd_reg == CMD_SOFTMAX_FUS) begin
-                  if (sof_done) state_n = DONE;
-               } else if (cmd_reg == CMD_SPMM_BSR) begin
+              if (is_spdot) begin
+                if (core_done) state_n = DONE;
+              end else if (cmd_reg == CMD_SOFTMAX_FUS) begin
+                 if (sof_done) state_n = DONE;
+              end else if (cmd_reg == CMD_SPMM_BSR) begin
                   if (spm_done) state_n = DONE;
                end else begin
                  if (run_cnt >= run_len) state_n = DONE; // variable latency placeholder

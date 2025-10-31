@@ -19,6 +19,9 @@ module idx_ram #(
   logic [DATA_WIDTH-1:0] mem [0:DEPTH-1];
 
   always_ff @(posedge clk) begin
+    if (!rstn) begin
+      // no synchronous clear of mem to keep simple; just mark rstn as used
+    end
     if (wen) mem[waddr] <= wdata;
   end
 

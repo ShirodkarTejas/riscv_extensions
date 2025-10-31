@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ..:/workspace
+    working_dir: /workspace
+    command: sleep infinity
+    tty: true
+    # Uncomment to enable GPU (requires NVIDIA Container Toolkit)
+    # gpus: all
+
+

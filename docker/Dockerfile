@@ -3,7 +3,8 @@ FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip git build-essential \
+    python3 python3-venv python3-pip git build-essential make cmake pkg-config \
+    verilator \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
@@ -16,7 +17,7 @@ RUN python3 -m pip install --upgrade pip && \
     pip install torch --index-url https://download.pytorch.org/whl/cu121 && \
     pip install triton
 
-# Default command: run tests
-CMD ["pytest", "-q"]
+# Default command: interactive shell (compose overrides to sleep for dev)
+CMD ["bash"]
 
 

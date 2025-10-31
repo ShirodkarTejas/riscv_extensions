@@ -15,6 +15,8 @@ std::unique_ptr<Pass> createTilePass();
 std::unique_ptr<Pass> createFuseSoftmaxPass();
 std::unique_ptr<Pass> createLowerToRVVPass();
 std::unique_ptr<Pass> createLowerToRoCCPass();
+std::unique_ptr<Pass> createVectorizePass();
+std::unique_ptr<Pass> createBufferizePass();
 
 }  // namespace sattn
 }  // namespace mlir

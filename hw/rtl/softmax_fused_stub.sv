@@ -29,11 +29,12 @@ module softmax_fused_stub (
     if (!rstn) begin
       i_row <= '0; s_tok <= '0; checksum <= 64'd0; checksum_out <= 64'd0;
     end else begin
-      unique case (state)
+      // verilator lint_off CASEINCOMPLETE
+      case (state)
         IDLE: if (start) begin i_row <= '0; s_tok <= '0; checksum <= 64'd0; checksum_out <= 64'd0; end
         RUN: begin
-          // dummy math: add row+token to checksum
-          checksum <= checksum + i_row + s_tok;
+          // dummy math: add row+token to checksum (widen to 64b)
+          checksum <= checksum + {{48{1'b0}}, i_row} + {{48{1'b0}}, s_tok};
           if (s_tok + 1 < s_tokens) begin
             s_tok <= s_tok + 16'd1;
           end else begin
@@ -41,17 +42,21 @@ module softmax_fused_stub (
             if (i_row + 1 < m_rows) i_row <= i_row + 16'd1;
           end
         end
-        DONE: ;
+        DONE: begin
+          // latch final checksum on DONE
+          checksum_out <= checksum;
+        end
       endcase
+      // verilator lint_on CASEINCOMPLETE
     end
   end
 
   always_comb begin
     state_n = state;
-    unique case (state)
+    case (state)
       IDLE: if (start) state_n = RUN;
       RUN:  if ( (i_row + 1 >= m_rows) && (s_tok + 1 >= s_tokens)) state_n = DONE;
-      DONE: begin checksum_out = checksum; state_n = IDLE; end
+      DONE: begin state_n = IDLE; end
       default: state_n = IDLE;
     endcase
   end

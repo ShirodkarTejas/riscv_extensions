@@ -16,6 +16,10 @@ void registerPasses() {
                          [] { return createLowerToRVVPass(); });
   PassRegistration<Pass>("sattn-lower-to-rocc", "Lower to RoCC backend",
                          [] { return createLowerToRoCCPass(); });
+  PassRegistration<Pass>("sattn-vectorize", "Vectorize RVV call",
+                         [] { return createVectorizePass(); });
+  PassRegistration<Pass>("sattn-bufferize", "Bufferize calls",
+                         [] { return createBufferizePass(); });
 }
 
 } // namespace sattn

@@ -34,8 +34,8 @@ module spmm_bsr_stub (
       unique case (state)
         IDLE: if (start) begin i_row <= '0; s_tok <= '0; d_dim <= '0; checksum <= 64'd0; checksum_out <= 64'd0; end
         RUN: begin
-          // dummy math: combine row/token/dim counts into checksum
-          checksum <= checksum + i_row + s_tok + d_dim;
+          // dummy math: combine row/token/dim counts into checksum (widen to 64b)
+          checksum <= checksum + {{48{1'b0}}, i_row} + {{48{1'b0}}, s_tok} + {{48{1'b0}}, d_dim};
           if (d_dim + 1 < head_dim_d) begin
             d_dim <= d_dim + 16'd1;
           end else begin
@@ -48,6 +48,10 @@ module spmm_bsr_stub (
             end
           end
         end
+        DONE: begin
+          // latch final checksum on DONE
+          checksum_out <= checksum;
+        end
         default: ;
       endcase
     end
@@ -58,7 +62,7 @@ module spmm_bsr_stub (
     unique case (state)
       IDLE: if (start) state_n = RUN;
       RUN:  if ( (i_row + 1 >= m_rows) && (s_tok + 1 >= s_tokens) && (d_dim + 1 >= head_dim_d)) state_n = DONE;
-      DONE: begin checksum_out = checksum; state_n = IDLE; end
+      DONE: begin state_n = IDLE; end
       default: state_n = IDLE;
     endcase
   end

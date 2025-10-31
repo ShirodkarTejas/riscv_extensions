@@ -25,8 +25,29 @@ def main():
     # 2) Emit indices.txt
     run([args.python, 'compiler/mlir/tools/sattn_emit_indices_txt.py', '--in-mlir', out_mlir, '--out-indices', args.indices])
 
-    # 3) Run sim
-    run([args.sim, args.indices])
+    # 3) Emit a simple descriptor text file for the sim
+    desc_txt = os.path.splitext(args.indices)[0] + '.desc'
+    with open(out_mlir, 'r') as f:
+        txt = f.read()
+    import re
+    m = re.search(r'sattn\.rocc_call[^\{]*\{([^}]*)\}', txt, re.MULTILINE | re.DOTALL)
+    if m:
+        attrs = m.group(1)
+        def get(name, default):
+            mm = re.search(rf'{name}\s*=\s*([0-9]+)', attrs)
+            return int(mm.group(1)) if mm else default
+        M = get('m_rows', 4)
+        D = get('head_dim_d', 16)
+        S = get('s_tokens', 16)
+        BS = get('block_size', 4)
+        KB = get('k_blocks', max(1, (S + BS - 1)//BS))
+    else:
+        M, D, S, BS, KB = 4, 16, 16, 4, 4
+    with open(desc_txt, 'w') as df:
+        df.write(f"m_rows={M}\nhead_dim_d={D}\nblock_size={BS}\nk_blocks={KB}\ns_tokens={S}\n")
+
+    # 4) Run sim (indices.txt and descriptor)
+    run([args.sim, args.indices, desc_txt])
 
 
 if __name__ == '__main__':

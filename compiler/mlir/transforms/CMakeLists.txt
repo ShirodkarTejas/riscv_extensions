@@ -4,6 +4,8 @@ set(SATTN_TRANSFORMS_SRC
   FuseSoftmax.cpp
   LowerToRVV.cpp
   LowerToRoCC.cpp
+  Vectorize.cpp
+  Bufferize.cpp
   Passes.cpp
 )
 
