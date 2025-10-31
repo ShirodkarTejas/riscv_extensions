@@ -14,8 +14,8 @@ def main():
     ap.add_argument('--mlir', required=True, help='Input MLIR file')
     ap.add_argument('--indices', default='indices.txt')
     ap.add_argument('--sattn-opt', default='build/mlir/tools/sattn-opt/sattn-opt')
-    ap.add_argument('--sim', default='obj_dir/Vrocc_sattn')
-    ap.add_argument('--python', default='python3')
+    ap.add_argument('--sim', default='hw/sim/obj_dir/Vrocc_sattn')
+    ap.add_argument('--python', default='/opt/venv/bin/python')
     args = ap.parse_args()
 
     # 1) Run passes: materialize-indices, add tiling and fused softmax tags, and annotate lower-to-rocc

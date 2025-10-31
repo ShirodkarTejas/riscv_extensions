@@ -21,15 +21,18 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - MLIR: CMake wiring against system LLVM/MLIR; `sattn-opt` minimal tool built and smoke-tested; compile+sim script added with fallback.
 - Tooling: descriptor emission fixed; indices emitter corrected; Docker image updated to build and run all flows.
  - Multi-spec: added SelectSpec pass with simple cost model (window span threshold) and pipelines registered in `sattn-opt`; tests added for RoCC/RVV flows.
+ - Selector extended: now considers keep_ratio, block_size cache-fit, and window span; added tests to validate selection flips.
+ - New spec: added `block_local_global` selection when `global_tokens` is present; verified in both RoCC and RVV pipelines.
+ - Selector overrides: `force_spec` attr and env vars (`SATTN_FORCE_SPEC`, `SATTN_DISABLE_SW`, `SATTN_DISABLE_BSR`); per-spec hooks add `blg_enabled` in lowered ops.
 
 ## Remaining Work (prioritized)
 1) MLIR production integration
    - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
    - Hook indices/BSR masks from IR into emitters; unify text/JSON emission
 2) Multi-spec support and selection
-   - Extend `sattn.spec` choices (block_local_global, N:M, topk_per_query, LSH); carry through to backends
-   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification
-   - Upgrade selector to a lightweight cost model (S,D,window,density,cache-fit) and hardware probe; allow override
+   - Extend `sattn.spec` choices (block_local_global done; N:M, topk_per_query, LSH pending); carry through to backends (BLG hooks in place)
+   - Register per-spec lowering for RVV and RoCC; optional CPU reference for verification (BLG hook added; CPU ref pending)
+   - Upgrade selector to a lightweight cost model (extended); add hardware probe; allow override (env/attr overrides added; probe flags minimal)
 3) RVV performance path
    - Complete segmented reductions and gather/scatter coverage across specs; vector dot and tile softmax
    - Validate on Spike/QEMU-RVV or dev board; add bandwidth/compute counters to benches

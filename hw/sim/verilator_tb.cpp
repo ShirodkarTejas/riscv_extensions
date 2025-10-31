@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
   }
 
   // Program descriptor (defaults; can be overridden by desc file)
-  uint32_t M = 4, D = 16, BS = 4, KB = 4, S = 16;
+  uint32_t M = 4, D = 16, BS = 4, KB = 4, S = 16, GT = 0;
   // Optionally read a descriptor file passed as argv[2]: key=value per line
   if (argc > 2) {
     FILE* df = fopen(argv[2], "r");
@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
           else if (!strcmp(key, "block_size")) BS = (uint32_t)val;
           else if (!strcmp(key, "k_blocks")) KB = (uint32_t)val;
           else if (!strcmp(key, "s_tokens")) S = (uint32_t)val;
+          else if (!strcmp(key, "global_tokens")) GT = (uint32_t)val;
         }
       }
       fclose(df);
@@ -155,10 +156,16 @@ int main(int argc, char** argv) {
   uint64_t proxy_gcy = (uint64_t)S * (uint64_t)D;
   uint64_t proxy_mcy = (uint64_t)M * (uint64_t)S * (uint64_t)D;
   uint64_t proxy_dma = ((uint64_t)S * (uint64_t)D) * 8ull; // Q+K 4B each per element
+  // BLG overhead: global tokens contribute extra Q/K traffic and gather effort
+  if (GT > 0) {
+    proxy_gcy += (uint64_t)GT * (uint64_t)D;
+    proxy_dma += (uint64_t)GT * (uint64_t)D * 8ull;
+  }
   printf("rocc_counters(rtl):   gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
          (unsigned long long)gcy, (unsigned long long)mcy, (unsigned long long)dma);
   printf("rocc_counters(proxy): gather_cycles=%llu mac_cycles=%llu dma_bytes=%llu\n",
          (unsigned long long)proxy_gcy, (unsigned long long)proxy_mcy, (unsigned long long)proxy_dma);
+  printf("spec_info: global_tokens=%u\n", GT);
   delete top;
   return 0;
 }

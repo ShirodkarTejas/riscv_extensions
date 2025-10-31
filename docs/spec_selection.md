@@ -1,0 +1,52 @@
+## Spec selection: attributes and commands
+
+### How selection works
+- If `global_tokens > 0` is set on `sattn.sparse_attention`, the selector sets `spec = "block_local_global"`.
+- Else, the selector compares a simple cost model:
+  - sliding_window uses `window_size`, `tile_S`, `tile_D` (and adds any `global_tokens` if present)
+  - bsr uses `keep_ratio`, `block_size`, and `tile_M`, `tile_S`, `tile_D`
+- If neither cost can be computed, defaults to `spec = "bsr"`.
+
+### Attributes the selector reads
+- `global_tokens: i64` → forces `block_local_global` if > 0
+- `window_size: i64` → influences sliding_window cost
+- `keep_ratio: f64`, `block_size: i64` → influence bsr cost
+- `tile_S: i64`, `tile_M: i64`, `tile_D: i64` → size hints for the model
+
+Example (unlowered):
+```
+module {
+  "sattn.sparse_attention"() { global_tokens = 8 : i64, block_size = 64 : i64, tile_M = 16 : i64, tile_D = 32 : i64, tile_S = 128 : i64 } : () -> ()
+}
+```
+
+### Pipelines and expected propagation
+- RoCC pipeline: `-pass-pipeline=builtin.module(sattn-lower-rocc)`
+- RVV pipeline: `-pass-pipeline=builtin.module(sattn-lower-rvv)`
+- The selected `spec` is propagated to `sattn.rocc_call`/`sattn.rvv_call`.
+
+### Commands
+- Run pipelines directly:
+```
+build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect -pass-pipeline=builtin.module(sattn-lower-rocc)
+build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect -pass-pipeline=builtin.module(sattn-lower-rvv)
+```
+
+- End-to-end compile+sim wrapper:
+```
+/opt/venv/bin/python compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir
+```
+This emits `indices.txt` and `indices.desc` (now includes `global_tokens` if present) and runs `hw/sim/obj_dir/Vrocc_sattn`.
+
+### Current limitations
+- Explicit user override of `spec` is not yet supported (selector will choose automatically).
+- Per-spec lowering differences are not yet implemented; only attribute propagation and selection are in place.
+ 
+### Overrides and probe flags
+- Attribute override: set `spec = "..."` on `sattn.sparse_attention` (or `force_spec = "..."`) to bypass selection.
+- Env override: set `SATTN_FORCE_SPEC=bsr|sliding_window|block_local_global`.
+- Probe flags: `SATTN_DISABLE_SW=1` or `SATTN_DISABLE_BSR=1` to bias selection away from an unsupported pattern.
+
+### Per-spec hooks in lowering
+- When `spec = "block_local_global"`, lowerings add `blg_enabled = true` on `sattn.rocc_call`/`sattn.rvv_call` so backends can specialize.
+

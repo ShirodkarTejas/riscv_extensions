@@ -9,7 +9,7 @@ def test_lower_rvv_propagates_spec():
         print('[skip] sattn-opt not found; skipping RVV test')
         return
     src = r'''module {
-  "sattn.sparse_attention"() { window_size = 32 : i64, tile_M = 16 : i64, tile_D = 32 : i64, tile_S = 256 : i64 } : () -> ()
+  "sattn.sparse_attention"() { window_size = 32 : i64, keep_ratio = 0.9 : f32, tile_M = 16 : i64, tile_D = 32 : i64, tile_S = 256 : i64 } : () -> ()
 }
 '''
     tmp = 'compiler/mlir/tests/_tmp_rvv_input.mlir'

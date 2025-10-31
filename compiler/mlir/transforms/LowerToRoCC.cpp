@@ -33,6 +33,12 @@ struct LowerToRoCCPass : public PassWrapper<LowerToRoCCPass, OperationPass<Modul
       if (tileM) st.addAttribute("m_rows", tileM);
       if (tileD) st.addAttribute("head_dim_d", tileD);
       if (tileS) st.addAttribute("s_tokens", tileS);
+      // Per-spec hook: mark BLG lowering toggle so backends can specialize
+      if (auto spec = dyn_cast_or_null<StringAttr>(op->getAttr("spec"))) {
+        if (spec.getValue() == "block_local_global") {
+          st.addAttribute("blg_enabled", BoolAttr::get(op->getContext(), true));
+        }
+      }
       b.create(st);
       toErase.push_back(op);
     });

@@ -3,3 +3,4 @@ head_dim_d=16
 block_size=4
 k_blocks=4
 s_tokens=16
+global_tokens=0

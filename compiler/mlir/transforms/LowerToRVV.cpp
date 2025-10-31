@@ -27,6 +27,12 @@ struct LowerToRVVPass : public PassWrapper<LowerToRVVPass, OperationPass<ModuleO
       if (auto a = op->getAttr("tile_M")) st.addAttribute("m_rows", a);
       if (auto a = op->getAttr("tile_D")) st.addAttribute("head_dim_d", a);
       if (auto a = op->getAttr("tile_S")) st.addAttribute("s_tokens", a);
+      // Per-spec hook: mark BLG lowering toggle so backends can specialize
+      if (auto spec = dyn_cast_or_null<StringAttr>(op->getAttr("spec"))) {
+        if (spec.getValue() == "block_local_global") {
+          st.addAttribute("blg_enabled", BoolAttr::get(op->getContext(), true));
+        }
+      }
       b.create(st);
       toErase.push_back(op);
     });

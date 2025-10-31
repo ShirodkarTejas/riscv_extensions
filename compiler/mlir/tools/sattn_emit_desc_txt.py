@@ -18,6 +18,7 @@ def parse_values(mlir_text: str):
             'block_size': geti('block_size', 4),
             's_tokens': geti('s_tokens', 16),
             'k_blocks': geti('k_blocks', 4),
+            'global_tokens': geti('global_tokens', 0),
         }
     # Fallback from unlowered attrs
     def find_int(name, default):
@@ -31,6 +32,7 @@ def parse_values(mlir_text: str):
         'block_size': BS,
         's_tokens': S,
         'k_blocks': math.ceil(S / (BS if BS else 1)),
+        'global_tokens': find_int('global_tokens', 0),
     }
 
 
@@ -42,8 +44,8 @@ def main():
     txt = open(args.in_mlir).read()
     vals = parse_values(txt)
     with open(args.out_desc, 'w') as f:
-        for k in ['m_rows', 'head_dim_d', 'block_size', 'k_blocks', 's_tokens']:
-            f.write(f"{k}={vals[k]}\n")
+        for k in ['m_rows', 'head_dim_d', 'block_size', 'k_blocks', 's_tokens', 'global_tokens']:
+            f.write(f"{k}={vals.get(k, 0)}\n")
 
 
 if __name__ == '__main__':
