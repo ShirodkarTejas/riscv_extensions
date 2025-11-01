@@ -19,10 +19,10 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - Additional sparse attention types implemented: sliding-window (incl. dilated/ring), landmark, block-local + global, N:M structured, top-k per query, LSH
 
 ## Recent progress (since last update)
-- RVV: vectorized helpers for gather/scatter and block reductions; cycles bench updated.
-- RoCC: index RAM + Q/K scratchpads + spdot/softmax/spmm stubs with checksums; counters wired to toggle events; harness reads non-zero MMIO counters.
-- MLIR: CMake wiring against system LLVM/MLIR; `sattn-opt` minimal tool built and smoke-tested; compile+sim script added with fallback.
-- Tooling: descriptor emission fixed; indices emitter corrected; Docker image updated to build and run all flows.
+ - RVV: vectorized helpers for gather/scatter and block reductions; cycles bench updated.
+ - RoCC: index RAM + Q/K scratchpads + spdot/softmax/spmm stubs with checksums; counters wired to toggle events; harness reads non-zero MMIO counters.
+ - MLIR: CMake wiring against system LLVM/MLIR; `sattn-opt` minimal tool built and smoke-tested; compile+sim script added with fallback.
+ - Tooling: descriptor emission fixed; indices emitter corrected; Docker image updated to build and run all flows.
  - Multi-spec: added SelectSpec pass with simple cost model (window span threshold) and pipelines registered in `sattn-opt`; tests added for RoCC/RVV flows.
  - Selector extended: now considers keep_ratio, block_size cache-fit, and window span; added tests to validate selection flips.
  - New spec: added `block_local_global` selection when `global_tokens` is present; verified in both RoCC and RVV pipelines.
@@ -41,6 +41,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - MLIR → RVV indices path: block-based specs now emit indices and the RVV runner can consume them via `--indices` (with global token expansion). Added test to exercise the path.
  - Docs updated: `spec_selection.md` documents precision, GQA/compression knobs and selector influence; `backends/rvv/README.md` includes metrics table and new flags.
  - Unified artifacts helper: added `compiler/mlir/tools/sattn_emit_artifacts.py` and migrated sim/RVV scripts to use it for indices + desc emission (single source of truth).
+ - Per-spec roundtrip checks: added MLIR-driven tests that run both RVV and RoCC sim for sliding_window, block_local_global, nm_structured, LSH, and landmark.
+ - RoCC functional check vs CPU reference: compile+sim test asserts checksum PASS for representative specs.
  - Grouped-query & compression blocks:
    - RVV: `gqa_group_size` shares selection across heads; `comp_block_size` enables compression-block scoring; bridged from MLIR and exercised in tests.
    - RoCC sim: new MMIOs for `gqa_group_size` and `comp_block_size`; simple latency model reflects their effect; tests assert cycle changes.
@@ -50,7 +52,6 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 1) MLIR production integration
    - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
 2) Multi-spec support and selection
-   - RoCC: add functional checks vs CPU for per-spec lowerings
    - Add hardware capability probe integration and refine per-model heuristics
 3) RVV performance path
    - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar — initial tiled variants done
@@ -62,6 +63,11 @@ This document summarizes what exists in the repo and what remains to reach a "mu
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
 5) Packaging/UX
    - CLI for profiles/specs and selection; Python packaging; CI for CPU (CUDA optional) and sim
+   - Stabilize C API for all specs and precisions (documented headers + versioning)
+   - Python bindings: minimal ctypes wheel and a pybind11-backed module with typed wrappers
+   - PyTorch extension: custom op exposing sparse attention specs; contiguous `[B,H,L,D]` tensors
+   - MLIR examples: reference IR snippets + bridge scripts for E2E integration from Python
+   - Integration docs: end-to-end examples (C/C++, Python, PyTorch, MLIR) and packaging notes
 
 ## Milestone tracking
 - Stage 3–5 focus: RVV vectorization and one RoCC primitive in RTL with sim match to CPU

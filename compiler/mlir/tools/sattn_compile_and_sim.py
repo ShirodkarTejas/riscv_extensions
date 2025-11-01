@@ -16,14 +16,40 @@ def main():
     ap.add_argument('--sattn-opt', default='build/mlir/tools/sattn-opt/sattn-opt')
     ap.add_argument('--sim', default='hw/sim/obj_dir/Vrocc_sattn')
     ap.add_argument('--python', default='/opt/venv/bin/python')
+    ap.add_argument('--prefer-bsr', action='store_true')
+    ap.add_argument('--prefer-sw', action='store_true')
+    ap.add_argument('--l1-bytes', type=int, default=0)
+    ap.add_argument('--use-hw-probe', action='store_true', help='Probe RoCC sim caps to steer selector')
     args = ap.parse_args()
 
     # 1) Run passes: materialize-indices, add tiling and fused softmax tags, and annotate lower-to-rocc
     out_mlir = os.path.splitext(args.mlir)[0] + '.lowered.mlir'
+    # Build selector env (hardware hints or disable flags)
+    env = os.environ.copy()
+    if args.prefer_bsr: env['SATTN_PREFER_BSR'] = '1'
+    if args.prefer_sw: env['SATTN_PREFER_SW'] = '1'
+    if args.l1_bytes and args.l1_bytes > 0: env['SATTN_HW_L1_BYTES'] = str(args.l1_bytes)
+    if args.use_hw_probe:
+        try:
+            out = subprocess.check_output([args.sim], text=True)
+            # rocc_hw: ver=0x1 caps=0xf [...] ; bit0=bsr, bit1=sw
+            for line in out.splitlines():
+                if line.startswith('rocc_hw:') and 'caps=' in line:
+                    import re
+                    m = re.search(r"caps=0x([0-9a-fA-F]+)", line)
+                    if m:
+                        caps = int(m.group(1), 16)
+                        if (caps & 0x1) == 0: env['SATTN_DISABLE_BSR'] = '1'
+                        if (caps & 0x2) == 0: env['SATTN_DISABLE_SW'] = '1'
+                    break
+        except Exception as _:
+            pass
+
     try:
         if not os.path.exists(args.sattn_opt):
             raise FileNotFoundError(args.sattn_opt)
-        run([args.sattn_opt, args.mlir, '-sattn-materialize-indices', '-sattn-tile', '-sattn-fuse-softmax', '-sattn-lower-to-rocc', '-o', out_mlir])
+        print('[run]', args.sattn_opt, args.mlir, '-sattn-materialize-indices', '-sattn-tile', '-sattn-fuse-softmax', '-sattn-lower-to-rocc', '-o', out_mlir)
+        subprocess.check_call([args.sattn_opt, args.mlir, '-sattn-materialize-indices', '-sattn-tile', '-sattn-fuse-softmax', '-sattn-lower-to-rocc', '-o', out_mlir], env=env)
     except Exception as e:
         print(f"[warn] sattn-opt unavailable or failed ({e}); using input MLIR directly")
         out_mlir = args.mlir

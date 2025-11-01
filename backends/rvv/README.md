@@ -1,6 +1,6 @@
 # RVV Baseline — Sparse Attention (Multi‑Spec)
 
-This directory contains a portable baseline implementation targeting RISC-V Vector (RVV). It includes scalar baselines with RVV vectorized inner loops where applicable, plus a cycles/counters harness and CPU reference comparators.
+This project contains a portable baseline implementation targeting RISC-V Vector (RVV). It includes scalar baselines with RVV vectorized inner loops where applicable, plus a cycles/counters harness and CPU reference comparators.
 
 ## Build (example)
 
@@ -154,3 +154,136 @@ Current proxy metrics collected in this environment (runner on host, no RVV hard
 <!-- metrics:end -->
 
 “On-device” metrics (rdcycle) are TBD and will be added after running on RVV hardware. RoCC simulation counters (cycles/bytes) are available in the compiler docs and sim output.
+
+---
+
+## Integration
+
+Use the stack at the attention-operator boundary. Provide Q/K/V tensors shaped `[B,H,L,D]`, choose a spec/precision, and receive O with the same shape. Pick the path that matches your environment.
+
+### Option A — C API (C/C++)
+
+Link the RVV static library and call a kernel:
+
+```c
+#include "sparse_attention_rvv.h"
+
+void run_blg(const float* Q,const float* K,const float* V,float* O,
+             int64_t B,int64_t H,int64_t L,int64_t D) {
+  sattn_shape_t s = { .B=B, .H=H, .L=L, .D=D };
+  sattn_blocktopk_params_t p = { .block_size=64, .keep_ratio=0.12f,
+                                 .global_tokens=8, .gqa_group_size=1, .comp_block_size=0 };
+  // fp32 path
+  sattn_rvv_block_topk(Q, K, V, O, s, p);
+  // or quantized variants (bf16/i8/i4) if scales provided
+}
+```
+
+Notes:
+- Inputs/outputs are contiguous row‑major `[B,H,L,D]` floats. Quantized paths accept fp32 inputs plus per‑tensor scales.
+- For block specs you can pass `--indices` via the runner (see Option C) or compute selection inside your app.
+
+### Option B — Python bindings (planned)
+
+- Minimal ctypes wheel exposing the C API (drop-in for quick prototyping)
+- Pybind11 module with typed wrappers and spec enums
+- Packaging: `pip install sattn-rvv` with prebuilt wheels where feasible
+
+### Option C — PyTorch custom op (planned)
+
+- Custom op: `sattn_sparse_attention(q, k, v, *, spec=..., block_size=..., keep_ratio=..., precision=..., scales=...) -> o`
+- Tensors must be contiguous `[B,H,L,D]` on CPU; deployment handles RVV execution
+- Optional integration with indices emission for block specs
+
+### Option D — MLIR route (research/E2E)
+
+- Emit `sattn.sparse_attention` in MLIR with shapes/knobs
+- Run selector/lowering; for block specs emit `indices.txt` + `.desc`
+- Execute:
+  - RVV: `compiler/mlir/tools/sattn_run_rvv_from_mlir.py --mlir <file> [--autotune] [--precision ... --scale_*]`
+  - RoCC: `compiler/mlir/tools/sattn_compile_and_sim.py --mlir <file>`
+
+### Choosing precision and scales
+
+- fp32 default; bf16/i8/i4 supported
+- For i8/i4, either supply scales or run:
+
+```bash
+/opt/venv/bin/python compiler/mlir/tools/sattn_calibrate_scales.py --mlir examples/sw_simple.mlir --precision i8
+```
+
+### Integration examples (planned)
+
+- End‑to‑end examples in C/C++, Python, and PyTorch
+- Reference MLIR snippets and bridge scripts
+
+---
+
+# Explain it like I'm Five
+
+### What this project is
+- A multi-spec sparse attention stack with:
+  - MLIR front-end (`sattn` dialect, passes, selector, lowerings)
+  - Backends: RVV (RISC‑V Vector) kernels and a spec-driven runner; RoCC RTL sim path
+  - CPU/GPU baselines and tests for verification
+  - Unified tooling to emit artifacts (indices/desc), run, and collect metrics
+
+### Capabilities (specs and knobs)
+- Specs: sliding_window (incl. dilated/ring), block_local_global (block_topk), nm_structured, topk_per_query, lsh, landmark.
+- Knobs influencing selection/impl: window_size, keep_ratio, block_size, global_tokens, gqa_group_size, comp_block_size, dilation, wrap.
+- Precisions: fp32, bf16, int8, int4 (with per-tensor scales).
+- Env hints: force/disable/prefer spec, simple HW capacity hints (e.g., L1 size) to bias selection.
+
+### High-level data flow
+```
+Author input (MLIR + shapes/knobs)
+  → SelectSpec pass picks spec using heuristics (keep, window span, cache-fit, GQA, comp, env hints)
+  → Lowering inserts backend-specific call ops and per-spec toggles (e.g., blg_enabled, nm_enabled)
+  → Unified artifacts emission (for block specs): indices.txt (+ desc) from MLIR
+  → Backend execution:
+      - RVV: spec-driven runner dispatches correct kernel (+ optional tiled, quantized variants)
+      - RoCC: Verilator sim consumes indices/desc via driver
+  ← Outputs: checksum/metrics (bytes read/written, MAC flops), counters, logs
+```
+
+### End-to-end MLIR workflow
+- Write a `sattn.sparse_attention` op (tile sizes, spec hints/knobs).
+- Run passes:
+  - SelectSpec chooses `spec`.
+  - Lowering to RVV/RoCC inserts attributes and per-spec enables.
+- For block-based specs, tooling emits `indices.txt` (plus `*.desc`).
+- Launch backend:
+  - RVV path: bridge script parses lowered IR, forwards flags to `sattn_rvv_runner`, optionally `--indices`, `--precision`, scales, `--tile_rows`, `--autotune`.
+  - RoCC path: compile-and-sim script runs passes, emits artifacts, runs Verilator with indices + desc.
+
+### RVV backend workflow
+- `sattn_rvv_runner`:
+  - Parses CLI flags derived from MLIR attrs.
+  - Dispatches by `--spec` to kernels:
+    - sliding_window (fp32/bf16/i8/i4; tiled variant)
+    - block_local_global (and nm/topk wrappers; quantized variants; tiled)
+    - lsh, landmark
+  - Optional `--indices` to consume precomputed selections; `--autotune` sweeps tile_rows.
+  - Emits proxy counters: bytes_read/written, mac_flops, plus checksums.
+
+### RoCC sim workflow
+- Lowered MLIR → unified artifacts (indices + descriptor) → Verilator harness.
+- Driver programs MMIO, feeds indices/desc, reads counters; tests assert invariants.
+
+### Verification and benchmarking
+- CPU/GPU references (Triton/CUDA and CPU) compare against RVV/RTL outputs.
+- Unit tests for selector choices, per-spec hooks, indices paths, RVV tiled/quantized paths.
+- Metrics snapshot tooling updates RVV README table; autotune finds tile_rows minimizing bandwidth.
+
+### Quantization and tuning
+- Precisions controlled from MLIR/CLI; scales via CLI or calibration helper.
+- Tiled variants and `--autotune` improve bandwidth/compute balance.
+
+### Summary
+- The system maps a high-level sparse attention op to the most suitable sparsity pattern using a principled, hardware-aware selector; it then lowers to concrete backends, emits required block-selection artifacts when needed, and runs optimized kernels/sim paths while reporting reproducible metrics. Verification is anchored by CPU/GPU references and unit tests, making the stack research-friendly for exploring sparsity policies, quantization, and vectorization trade-offs.
+
+- Key outcomes: multi-spec coverage; end-to-end from MLIR to RVV/RTL; reproducible counters; knobs for modeling grouped queries and compression blocks; and quantization-ready paths with calibration.
+
+- Pending emphasis: production-grade MLIR tiling/bufferization, refined selector HW probes, and deeper RoCC functional pipelines/cpu-ref checks.
+
+- In short: a modular, testable pipeline that selects, lowers, and executes sparse attention across multiple specs and backends, with unified artifact generation and measurable performance signals.

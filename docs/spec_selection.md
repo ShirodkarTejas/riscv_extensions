@@ -89,6 +89,12 @@ To derive symmetric per-tensor scales (`i8`/`i4`) from synthetic data consistent
 
 You can then add `scale_q/scale_k/scale_v` to your MLIR or pass `--scale_*_x1000` to the runner.
 
+Quantization defaults and guidance
+
+- Recommended symmetric per‑tensor scales for int8: `scale_q = scale_k = scale_v = 0.05` (good starting point for normalized activations). For int4, start with `0.10–0.125`.
+- Use calibration to derive dataset‑specific scales from representative samples.
+- Relative tolerance guide for checksum comparisons: bf16 ≈ 1e‑2, int8 ≈ 5e‑2, int4 ≈ 1e‑1.
+
 ### Grouped-query sharing and compression blocks
 
 Attributes understood by both RVV and RoCC paths:
@@ -125,6 +131,22 @@ Unified artifacts emitter (used by both RVV and simulation flows):
 ```
 
 The RVV runner bridge and the RoCC simulation wrapper both call this helper, keeping a single source of truth for emitted indices and descriptor fields.
+
+Selector preference flags (hardware hints)
+
+Both the RVV MLIR bridge and the RoCC compile+sim wrapper accept flags to hint the selector without changing code:
+
+```
+# RVV bridge
+python3 compiler/mlir/tools/sattn_run_rvv_from_mlir.py --mlir input.mlir \
+  [--prefer-bsr] [--prefer-sw] [--l1-bytes 65536] [--use-hw-probe]
+
+# RoCC compile+sim
+python3 compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir \
+  [--prefer-bsr] [--prefer-sw] [--l1-bytes 65536] [--use-hw-probe]
+```
+
+These map to selector environment variables (`SATTN_PREFER_BSR`, `SATTN_PREFER_SW`, `SATTN_HW_L1_BYTES`). With `--use-hw-probe`, the tool runs the RoCC sim briefly to read capability bits and sets `SATTN_DISABLE_BSR`/`SATTN_DISABLE_SW` accordingly before running selection.
 
 ### Dilated/ring sliding-window (new)
 

@@ -57,15 +57,39 @@ def main():
     ap.add_argument('--sattn-opt', default='build/mlir/tools/sattn-opt/sattn-opt')
     ap.add_argument('--runner', default='build/backends/rvv/sattn_rvv_runner')
     ap.add_argument('--autotune', action='store_true')
+    ap.add_argument('--prefer-bsr', action='store_true', help='Hint selector to prefer block specs')
+    ap.add_argument('--prefer-sw', action='store_true', help='Hint selector to prefer sliding-window')
+    ap.add_argument('--l1-bytes', type=int, default=0, help='Override L1 size for selector cache-fit heuristic')
+    ap.add_argument('--use-hw-probe', action='store_true', help='Probe RoCC sim caps to steer selector')
     args = ap.parse_args()
 
     lowered = args.mlir + '.rvv.mlir'
     try:
         if not os.path.exists(args.sattn_opt):
             raise FileNotFoundError(args.sattn_opt)
-        run([args.sattn_opt, args.mlir, '--allow-unregistered-dialect', '-pass-pipeline=builtin.module(sattn-lower-rvv)'])
+        # Set hardware preference envs during selection
+        env = os.environ.copy()
+        if args.prefer_bsr: env['SATTN_PREFER_BSR'] = '1'
+        if args.prefer_sw: env['SATTN_PREFER_SW'] = '1'
+        if args.l1_bytes and args.l1_bytes > 0: env['SATTN_HW_L1_BYTES'] = str(args.l1_bytes)
+        if args.use_hw_probe:
+            try:
+                out = subprocess.check_output(['hw/sim/obj_dir/Vrocc_sattn'], text=True)
+                for line in out.splitlines():
+                    if line.startswith('rocc_hw:') and 'caps=' in line:
+                        import re
+                        m = re.search(r"caps=0x([0-9a-fA-F]+)", line)
+                        if m:
+                            caps = int(m.group(1), 16)
+                            if (caps & 0x1) == 0: env['SATTN_DISABLE_BSR'] = '1'
+                            if (caps & 0x2) == 0: env['SATTN_DISABLE_SW'] = '1'
+                        break
+            except Exception:
+                pass
+        print('[run]', args.sattn_opt, args.mlir, '--allow-unregistered-dialect', '-pass-pipeline=builtin.module(sattn-lower-rvv)')
+        subprocess.check_call([args.sattn_opt, args.mlir, '--allow-unregistered-dialect', '-pass-pipeline=builtin.module(sattn-lower-rvv)'], env=env)
         # Since sattn-opt writes to stdout, capture and save
-        out = run([args.sattn_opt, args.mlir, '--allow-unregistered-dialect', '-pass-pipeline=builtin.module(sattn-lower-rvv)'])
+        out = subprocess.check_output([args.sattn_opt, args.mlir, '--allow-unregistered-dialect', '-pass-pipeline=builtin.module(sattn-lower-rvv)'], text=True, env=env)
         with open(lowered, 'w') as f: f.write(out)
         txt = out
     except Exception as e:
