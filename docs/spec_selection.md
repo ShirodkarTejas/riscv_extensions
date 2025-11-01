@@ -176,6 +176,38 @@ Install (editable):
 cd python && python3 -m pip install -e .
 ```
 
+MLIR passes and pipelines
+
+- Individual passes (invocable via sattn-opt -pass-pipeline=builtin.module(<pass>)):
+  - sattn-select-spec: sets `spec` using heuristics and hints
+  - sattn-materialize-indices: emits `indices`/`block_indices` metadata
+  - sattn-tile: annotates `tile_M/tile_D/tile_S` defaults (preserved to backends)
+  - sattn-fuse-softmax: adds `fused_softmax` when `softmax_mode=logsumexp`
+  - sattn-lower-to-rvv: creates `sattn.rvv_call`
+  - sattn-vectorize: tags `vectorized`
+  - sattn-bufferize: tags `bufferized`, `buffer_strategy`, `buffer_layout="rowmajor"`
+  - sattn-lower-to-rocc: creates `sattn.rocc_call`
+
+- Pipelines:
+  - sattn-lower-rvv: select-spec → lower-to-rvv → vectorize → bufferize
+  - sattn-lower-rocc: select-spec → materialize-indices → tile → fuse-softmax → lower-to-rocc → bufferize
+
+Examples
+
+```
+# RVV pipeline
+build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect \
+  -pass-pipeline=builtin.module(sattn-lower-rvv)
+
+# RoCC pipeline
+build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect \
+  -pass-pipeline=builtin.module(sattn-lower-rocc)
+
+# Individual
+build/mlir/tools/sattn-opt/sattn-opt input.mlir --allow-unregistered-dialect \
+  -pass-pipeline=builtin.module(sattn-tile,sattn-lower-to-rocc)
+```
+
 ### Dilated/ring sliding-window (new)
 
 Attributes:

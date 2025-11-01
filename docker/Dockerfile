@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget gnupg ca-certificates lsb-release \
     libedit-dev zlib1g-dev libzstd-dev libcurl4-openssl-dev \
     verilator \
+    # RISC-V cross toolchain (Linux-gnu) and QEMU user for RVV testing
+    gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-user \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

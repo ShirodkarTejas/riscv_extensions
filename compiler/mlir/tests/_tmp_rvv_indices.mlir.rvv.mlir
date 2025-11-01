@@ -1,4 +1,4 @@
 module {
-  "sattn.rvv_call"() {blg_enabled = true, block_size = 16 : i64, bufferized, head_dim_d = 32 : i64, s_tokens = 128 : i64, spec = "block_local_global", tile_D = 32 : i64, tile_S = 128 : i64, vectorized} : () -> ()
+  "sattn.rvv_call"() {blg_enabled = true, block_size = 16 : i64, buffer_layout = "rowmajor", buffer_strategy = "one-shot", bufferized, head_dim_d = 32 : i64, s_tokens = 128 : i64, spec = "block_local_global", tile_D = 32 : i64, tile_S = 128 : i64, vectorized} : () -> ()
 }
 

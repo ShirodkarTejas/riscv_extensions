@@ -43,6 +43,23 @@ Run the benches on Spike/QEMU or your RVV board:
 ./sattn_rvv_runner --spec block_local_global --L 512 --D 64 --block_size 64 --keep_x1000 120 --autotune
 ```
 
+### Run under QEMU (Docker/dev container)
+
+If you are using the provided Docker image, QEMU user-mode and the RISC-V Linux-gnu cross toolchain are preinstalled. You can cross-build the RVV backends and run a smoke test under QEMU:
+
+```bash
+# Cross-build with Linux-gnu toolchain and run compare test under QEMU
+python scripts/build_and_run_rvv_qemu.py
+
+# Or run the RVV runner under QEMU with custom args
+python scripts/build_and_run_rvv_qemu.py --exe sattn_rvv_runner --args "--spec sliding_window --L 128 --D 32 --window 8"
+```
+
+Notes:
+- The toolchain file `backends/rvv/toolchains/linux-gnu-rvv.cmake` sets `-march=rv64gcv -mabi=lp64d`.
+- QEMU is invoked as `qemu-riscv64 -L /usr/riscv64-linux-gnu -cpu rv64,v=true,vlen=128,elen=64 ...`.
+
+
 ### Precision and scales
 
 Select precision and optional per-tensor scales via runner flags:

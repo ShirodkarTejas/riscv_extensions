@@ -49,21 +49,21 @@ This document summarizes what exists in the repo and what remains to reach a "mu
    - RVV: `gqa_group_size` shares selection across heads; `comp_block_size` enables compression-block scoring; bridged from MLIR and exercised in tests.
    - RoCC sim: new MMIOs for `gqa_group_size` and `comp_block_size`; simple latency model reflects their effect; tests assert cycle changes.
    - Selector: heuristics penalize sliding-window when GQA > 1 and discount block selection when compression blocks are smaller than selection blocks.
+ - Multi-spec & HW probe:
+   - Hardware capability probe integrated: CLI `--use-hw-probe` in both RVV and RoCC flows reads RoCC sim caps and sets selector env hints; `SATTN_HW_L1_BYTES`, `SATTN_PREFER_*`, and disable flags supported; tests added for both paths.
+ - MLIR production integration:
+   - Added individual pass drivers (`sattn-*-only` via pipelines) and strengthened pipelines; Tile defaults propagate to backend attrs; Bufferize tags strategy/layout; pipeline and individual pass tests added and green.
 
 ## Remaining Work (prioritized)
-1) MLIR production integration
-   - Expand pipelines with real tiling/vectorization/bufferization and backend-specific ops; keep FileCheck tests green
-2) Multi-spec support and selection
-   - Add hardware capability probe integration and refine per-model heuristics
-3) RVV performance path
+1) RVV performance path
    - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar — initial tiled variants done
    - Add simple autotune hooks in runner (tile_rows sweep); validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches
    - Quantization docs: optional heuristics beyond calibration
    - Evaluate impact of GQA/compression settings on bandwidth/compute counters — keep validating on device
-4) RoCC compute datapath
+2) RoCC compute datapath
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
-5) Packaging/UX
+3) Packaging/UX
    - CLI for profiles/specs and selection — profile wrapper added; expand as needed
    - Python packaging — minimal wrapper done; extend API surface and typing
    - Stabilize C API for all specs and precisions (documented headers + versioning) — version macros added
@@ -78,7 +78,6 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 - Stage 8: Expanded evaluation matrix and plots
 
 ## Next actions (short)
- - Multi-spec: add a lightweight hardware capability probe and fold into selector; keep tests green (selector env hints added; HW probe for RoCC surfaced via MMIO)
  - E2E: maintain unified artifacts flow; add minor cleanup and examples in docs
  - RVV: on-device run (or precise sim) to collect real cycles; extend metrics table with “on-device” column
  - RoCC: refine counters and stub fidelity; keep invariants tests

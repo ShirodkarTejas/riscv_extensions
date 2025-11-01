@@ -30,4 +30,9 @@ pytest -q
 
 Notes:
 - Triton/PyTorch versions in the Dockerfile are pinned for CUDA 12.1.
-- For RVV builds, use your cross-compiler in-container or on host; see `backends/rvv/`.
+- For RVV builds, the container includes `riscv64-linux-gnu-gcc` and `qemu-riscv64`.
+- Cross-build and run RVV on QEMU:
+  ```bash
+  python scripts/build_and_run_rvv_qemu.py
+  ```
+  This uses `backends/rvv/toolchains/linux-gnu-rvv.cmake` and runs a compare test under QEMU user-mode.
