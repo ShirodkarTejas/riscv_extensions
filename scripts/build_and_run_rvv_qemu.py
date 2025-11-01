@@ -21,13 +21,30 @@ def build(build_dir: str):
     if os.path.exists(build_dir):
         shutil.rmtree(build_dir)
     os.makedirs(build_dir, exist_ok=True)
-    tc = os.path.abspath(os.path.join('backends', 'rvv', 'toolchains', 'linux-gnu-rvv.cmake'))
-    # For now, disable RVV intrinsics in cross-build to avoid toolchain header mismatches;
-    # this still validates QEMU environment via scalar fallbacks.
-    run(['cmake', '-G', 'Ninja', '-S', 'backends/rvv', '-B', build_dir,
-         f'-DCMAKE_TOOLCHAIN_FILE={tc}', '-DCMAKE_BUILD_TYPE=Release',
-         '-DCMAKE_C_FLAGS=-U__riscv_vector'])
-    run(['cmake', '--build', build_dir, '-j'])
+    gcc_tc = os.path.abspath(os.path.join('backends', 'rvv', 'toolchains', 'linux-gnu-rvv.cmake'))
+    clang_tc = os.path.abspath(os.path.join('backends', 'rvv', 'toolchains', 'linux-gnu-rvv-clang.cmake'))
+    try:
+        run(['cmake', '-G', 'Ninja', '-S', 'backends/rvv', '-B', build_dir,
+             f'-DCMAKE_TOOLCHAIN_FILE={gcc_tc}', '-DCMAKE_BUILD_TYPE=Release'])
+        run(['cmake', '--build', build_dir, '-j'])
+    except subprocess.CalledProcessError:
+        # Retry with Clang toolchain
+        shutil.rmtree(build_dir)
+        os.makedirs(build_dir, exist_ok=True)
+        # Patch absolute paths in glibc linker script to be sysroot-friendly
+        libc_script = '/usr/riscv64-linux-gnu/lib/libc.so'
+        try:
+            with open(libc_script, 'r', encoding='utf-8') as f:
+                txt = f.read()
+            new_txt = txt.replace('/usr/riscv64-linux-gnu/lib/', '')
+            if new_txt != txt:
+                with open(libc_script, 'w', encoding='utf-8') as f:
+                    f.write(new_txt)
+        except Exception as _:
+            pass
+        run(['cmake', '-G', 'Ninja', '-S', 'backends/rvv', '-B', build_dir,
+             f'-DCMAKE_TOOLCHAIN_FILE={clang_tc}', '-DCMAKE_BUILD_TYPE=Release'])
+        run(['cmake', '--build', build_dir, '-j'])
 
 
 def qemu_prefix():
@@ -42,7 +59,7 @@ def qemu_prefix():
 def main():
     ap = argparse.ArgumentParser(description='Cross-build RVV and run under QEMU user-mode')
     ap.add_argument('--build-dir', default='build/rvv-riscv64')
-    ap.add_argument('--exe', default='sattn_rvv_test_helpers', help='Executable to run under QEMU')
+    ap.add_argument('--exe', default='sattn_rvv_compare_sw', help='Executable to run under QEMU')
     ap.add_argument('--args', default='', help='Additional args to pass to the executable')
     args = ap.parse_args()
 

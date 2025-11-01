@@ -163,6 +163,22 @@ Each run prints a single summary line including the kernel spec, checksum, and p
 spec=sliding_window checksum=272.034012 rvv_bytes_read=398336 bytes_written=138240 mac_flops=32512
 ```
 
+### Autotune sweep helper
+
+Use the helper to sweep tile_rows and report a table (and optional runner `--autotune` result):
+
+```
+python3 scripts/rvv_autotune_sweep.py --spec sliding_window --L 256 --D 64 --window 16 --tiles 1,2,4,8,16,32 --autotune \
+  --export-csv sweep_sw_L256_D64.csv --export-md sweep_sw_L256_D64.md --label "SW L=256 D=64 window=16"
+```
+
+To run the sweep under QEMU (cross-build once, then execute):
+
+```
+python3 scripts/rvv_autotune_sweep.py --spec sliding_window --L 128 --D 32 --window 8 --tiles 1,2,4,8 --qemu --autotune \
+  --export-csv sweep_sw_qemu_L128_D32.csv --export-md sweep_sw_qemu_L128_D32.md --label "SW QEMU L=128 D=32 window=8"
+```
+
 Calibration (optional, for i8/i4 scales):
 
 ```

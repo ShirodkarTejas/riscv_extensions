@@ -1,6 +1,8 @@
 version: "3.9"
 services:
   dev:
+    image: sattn/rvv-dev:latest
+    container_name: sattn_rvv_dev
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -9,6 +11,7 @@ services:
     working_dir: /workspace
     command: sleep infinity
     tty: true
+    restart: unless-stopped
     # Uncomment to enable GPU (requires NVIDIA Container Toolkit)
     # gpus: all
 

@@ -3,9 +3,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
-#ifdef __riscv_vector
-#include <riscv_vector.h>
-#endif
+#include "rvv_compat.h"
 
 // RVV proxy counters (bytes read/written, MAC flops)
 static struct { uint64_t br, bw, mac; } _rvv_ctrs = {0,0,0};

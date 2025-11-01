@@ -9,7 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libedit-dev zlib1g-dev libzstd-dev libcurl4-openssl-dev \
     verilator \
     # RISC-V cross toolchain (Linux-gnu) and QEMU user for RVV testing
-    gcc-riscv64-linux-gnu g++-riscv64-linux-gnu qemu-user \
+    gcc-riscv64-linux-gnu g++-riscv64-linux-gnu \
+    gcc-14-riscv64-linux-gnu g++-14-riscv64-linux-gnu \
+    qemu-user \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

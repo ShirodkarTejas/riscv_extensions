@@ -53,6 +53,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
    - Hardware capability probe integrated: CLI `--use-hw-probe` in both RVV and RoCC flows reads RoCC sim caps and sets selector env hints; `SATTN_HW_L1_BYTES`, `SATTN_PREFER_*`, and disable flags supported; tests added for both paths.
  - MLIR production integration:
    - Added individual pass drivers (`sattn-*-only` via pipelines) and strengthened pipelines; Tile defaults propagate to backend attrs; Bufferize tags strategy/layout; pipeline and individual pass tests added and green.
+ - RVV autotune sweep:
+   - Added `scripts/rvv_autotune_sweep.py` to sweep `tile_rows` (native/QEMU), print tables, and export CSV/Markdown; README updated with usage.
 
 ## Remaining Work (prioritized)
 1) RVV performance path

@@ -19,12 +19,12 @@ Requires NVIDIA drivers and `nvidia-container-toolkit`.
 
 Build:
 ```bash
-docker build -f docker/Dockerfile -t sattn:cuda .
+docker build -f docker/Dockerfile -t sattn/rvv-dev:latest .
 ```
 
 Run (GPU):
 ```bash
-docker run --gpus all -it --rm -v $PWD:/workspace -w /workspace sattn:cuda bash
+docker run --gpus all -it --rm -v $PWD:/workspace -w /workspace sattn/rvv-dev:latest bash
 pytest -q
 ```
 
