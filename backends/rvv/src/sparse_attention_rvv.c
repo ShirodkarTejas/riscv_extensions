@@ -7,6 +7,13 @@
 #include <riscv_vector.h>
 #endif
 
+// RVV proxy counters (bytes read/written, MAC flops)
+static struct { uint64_t br, bw, mac; } _rvv_ctrs = {0,0,0};
+void sattn_rvv_counters_reset() { _rvv_ctrs.br = _rvv_ctrs.bw = _rvv_ctrs.mac = 0; }
+void sattn_rvv_counters_get(sattn_rvv_counters_t* out) {
+  if (!out) return; out->bytes_read = _rvv_ctrs.br; out->bytes_written = _rvv_ctrs.bw; out->mac_flops = _rvv_ctrs.mac;
+}
+
 // Forward decls used by early helper implementations
 static inline int64_t offset_bhld(int64_t b, int64_t h, int64_t l, int64_t d,
                                   int64_t B, int64_t H, int64_t L, int64_t D);
@@ -158,12 +165,6 @@ static inline uint64_t rdcycle() { return 0ull; }
 uint64_t sattn_rdcycle() { return rdcycle(); }
 
 // RVV proxy counters
-static struct { uint64_t br, bw, mac; } _rvv_ctrs = {0,0,0};
-void sattn_rvv_counters_reset() { _rvv_ctrs.br = _rvv_ctrs.bw = _rvv_ctrs.mac = 0; }
-void sattn_rvv_counters_get(sattn_rvv_counters_t* out) {
-  if (!out) return; out->bytes_read = _rvv_ctrs.br; out->bytes_written = _rvv_ctrs.bw; out->mac_flops = _rvv_ctrs.mac;
-}
-
 void sattn_rvv_landmark(
     const float* Q,
     const float* K,

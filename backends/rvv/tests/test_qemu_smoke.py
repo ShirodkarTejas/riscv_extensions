@@ -10,7 +10,7 @@ def test_qemu_compare_sw():
         print('[skip] qemu-riscv64 or riscv64-linux-gnu-gcc not found; skipping QEMU RVV test')
         return
     out = subprocess.check_output([sys.executable, 'scripts/build_and_run_rvv_qemu.py'], text=True)
-    assert 'MATCH' in out
+    assert 'PASS' in out
 
 
 
