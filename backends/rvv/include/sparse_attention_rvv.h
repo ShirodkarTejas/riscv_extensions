@@ -7,6 +7,10 @@
 extern "C" {
 #endif
 
+// API versioning for the RVV C interface
+#define SATTN_RVV_API_VERSION_MAJOR 0
+#define SATTN_RVV_API_VERSION_MINOR 1
+
 typedef struct {
   int64_t B, H, L, D;
 } sattn_shape_t;

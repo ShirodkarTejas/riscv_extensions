@@ -160,6 +160,22 @@ python3 scripts/sattn_profile.py --mlir input.mlir --backend sim \
 
 This wrapper forwards flags to the appropriate tools and prints the resulting counters/outputs.
 
+Python API wrappers
+
+```python
+from sattn import run_rvv_from_mlir, compile_and_sim
+# RVV
+out = run_rvv_from_mlir('input.mlir', prefer_bsr=True, autotune=True)
+print(out)
+# RoCC sim
+compile_and_sim('input.mlir', use_hw_probe=True)
+```
+
+Install (editable):
+```
+cd python && python3 -m pip install -e .
+```
+
 ### Dilated/ring sliding-window (new)
 
 Attributes:

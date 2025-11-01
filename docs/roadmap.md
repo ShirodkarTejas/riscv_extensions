@@ -44,6 +44,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
  - Per-spec roundtrip checks: added MLIR-driven tests that run both RVV and RoCC sim for sliding_window, block_local_global, nm_structured, LSH, and landmark.
  - RoCC functional check vs CPU reference: compile+sim test asserts checksum PASS for representative specs.
  - Grouped-query & compression blocks:
+ - Packaging/UX:
+   - Python package (`python/sattn`) with wrappers for RVV run and RoCC sim; basic import tests; CLI profile wrapper script.
    - RVV: `gqa_group_size` shares selection across heads; `comp_block_size` enables compression-block scoring; bridged from MLIR and exercised in tests.
    - RoCC sim: new MMIOs for `gqa_group_size` and `comp_block_size`; simple latency model reflects their effect; tests assert cycle changes.
    - Selector: heuristics penalize sliding-window when GQA > 1 and discount block selection when compression blocks are smaller than selection blocks.
@@ -62,8 +64,9 @@ This document summarizes what exists in the repo and what remains to reach a "mu
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling
 5) Packaging/UX
-   - CLI for profiles/specs and selection; Python packaging; CI for CPU (CUDA optional) and sim
-   - Stabilize C API for all specs and precisions (documented headers + versioning)
+   - CLI for profiles/specs and selection — profile wrapper added; expand as needed
+   - Python packaging — minimal wrapper done; extend API surface and typing
+   - Stabilize C API for all specs and precisions (documented headers + versioning) — version macros added
    - Python bindings: minimal ctypes wheel and a pybind11-backed module with typed wrappers
    - PyTorch extension: custom op exposing sparse attention specs; contiguous `[B,H,L,D]` tensors
    - MLIR examples: reference IR snippets + bridge scripts for E2E integration from Python
