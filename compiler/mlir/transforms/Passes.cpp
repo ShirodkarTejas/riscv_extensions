@@ -32,6 +32,39 @@ static mlir::PassPipelineRegistration<> SattnLowerRVV(
       pm.addPass(createBufferizePass());
     });
 
+// Single-pass pipelines for convenient invocation
+static mlir::PassPipelineRegistration<> SattnSelectSpecOnly(
+    "sattn-select-spec", "SelectSpec only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createSelectSpecPass()); });
+
+static mlir::PassPipelineRegistration<> SattnMaterializeOnly(
+    "sattn-materialize-indices", "MaterializeIndices only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createMaterializeIndicesPass()); });
+
+static mlir::PassPipelineRegistration<> SattnTileOnly(
+    "sattn-tile", "Tile only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createTilePass()); });
+
+static mlir::PassPipelineRegistration<> SattnFuseSoftmaxOnly(
+    "sattn-fuse-softmax", "FuseSoftmax only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createFuseSoftmaxPass()); });
+
+static mlir::PassPipelineRegistration<> SattnLowerToRVVOnly(
+    "sattn-lower-to-rvv", "LowerToRVV only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createLowerToRVVPass()); });
+
+static mlir::PassPipelineRegistration<> SattnLowerToRoCCOnly(
+    "sattn-lower-to-rocc", "LowerToRoCC only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createLowerToRoCCPass()); });
+
+static mlir::PassPipelineRegistration<> SattnVectorizeOnly(
+    "sattn-vectorize", "Vectorize only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createVectorizePass()); });
+
+static mlir::PassPipelineRegistration<> SattnBufferizeOnly(
+    "sattn-bufferize", "Bufferize only",
+    [](mlir::OpPassManager &pm) { pm.addPass(createBufferizePass()); });
+
 } // namespace sattn
 } // namespace mlir
 

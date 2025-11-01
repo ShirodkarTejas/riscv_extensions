@@ -19,6 +19,9 @@ struct BufferizePass : public PassWrapper<BufferizePass, OperationPass<ModuleOp>
       auto name = op->getName().getStringRef();
       if (name == "sattn.rvv_call" || name == "sattn.rocc_call") {
         op->setAttr("bufferized", UnitAttr::get(op->getContext()));
+        // Basic placeholder for bufferization strategy & layout
+        op->setAttr("buffer_strategy", StringAttr::get(op->getContext(), "one-shot"));
+        op->setAttr("buffer_layout", StringAttr::get(op->getContext(), "rowmajor"));
       }
     });
   }

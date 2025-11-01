@@ -22,10 +22,13 @@ module {
     out = subprocess.check_output(cmd, text=True)
     fc = shutil.which('FileCheck') or shutil.which('/usr/bin/FileCheck')
     if fc:
-        check = ' ; CHECK: sattn.rvv_call\n'
+        check = ' ; CHECK: sattn.rvv_call\n ; CHECK: vectorized\n ; CHECK: bufferized\n ; CHECK: buffer_layout = "rowmajor"\n'
         p = subprocess.run([fc, '-'], input=out + check, text=True)
         assert p.returncode == 0, 'FileCheck failed'
     else:
         assert 'sattn.rvv_call' in out
+        assert 'vectorized' in out
+        assert 'bufferized' in out
+        assert 'buffer_layout = "rowmajor"' in out
 
 
