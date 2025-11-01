@@ -52,6 +52,7 @@ int main(int argc, char** argv) {
   float *O=(float*)malloc(elems*sizeof(float));
   if(!Q||!K||!V||!O) return 2;
   for (size_t i = 0; i < elems; ++i) { Q[i] = sinf((float)i*0.01f); K[i] = cosf((float)i*0.02f); V[i] = sinf((float)i*0.03f); }
+  unsigned long long start_cycles = sattn_rdcycle();
 
   if (calibrate) {
     // Compute per-tensor max-abs and emit recommended symmetric per-tensor scales
@@ -160,11 +161,19 @@ int main(int argc, char** argv) {
   }
   double acc=0.0; for (size_t i=0;i<elems;++i) acc += O[i];
   sattn_rvv_counters_t ctrs; sattn_rvv_counters_get(&ctrs);
-  printf("spec=%s checksum=%.6f rvv_bytes_read=%llu bytes_written=%llu mac_flops=%llu\n",
+  unsigned long long end_cycles = sattn_rdcycle();
+  unsigned long long rvv_cycles = 0ull;
+  if (end_cycles > start_cycles && start_cycles != 0ull) rvv_cycles = end_cycles - start_cycles;
+  printf("spec=%s checksum=%.6f rvv_bytes_read=%llu bytes_written=%llu mac_flops=%llu",
          spec, acc,
          (unsigned long long)ctrs.bytes_read,
          (unsigned long long)ctrs.bytes_written,
          (unsigned long long)ctrs.mac_flops);
+  if (rvv_cycles) {
+    printf(" rvv_cycles=%llu\n", rvv_cycles);
+  } else {
+    printf("\n");
+  }
   free(Q); free(K); free(V); free(O);
   return 0;
 }

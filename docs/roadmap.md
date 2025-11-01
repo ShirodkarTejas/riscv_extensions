@@ -56,8 +56,8 @@ This document summarizes what exists in the repo and what remains to reach a "mu
 3) RVV performance path
    - Broaden vectorization across kernels; tile-level softmax/fused paths; benchmark vs scalar — initial tiled variants done
    - Add simple autotune hooks in runner (tile_rows sweep); validate on Spike/QEMU-RVV or dev board; maintain bandwidth/compute counters in benches
-   - Quantization docs: document recommended defaults; optional heuristics beyond calibration
-   - Evaluate impact of GQA/compression settings on bandwidth/compute counters; add guidance to docs
+   - Quantization docs: optional heuristics beyond calibration
+   - Evaluate impact of GQA/compression settings on bandwidth/compute counters — keep validating on device
 4) RoCC compute datapath
    - Flesh out functional pipelines beyond stubs (gather/DMA timing, MAC utilization, softmax tile)
    - Compare to CPU reference per-tile; utilization and DMA efficiency profiling

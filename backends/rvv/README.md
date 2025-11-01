@@ -67,6 +67,19 @@ Select precision and optional per-tensor scales via runner flags:
 
 # Use compression blocks (compute on pooled keys), then map to selection blocks
 ./sattn_rvv_runner --spec block_local_global --L 128 --D 32 --block_size 16 --comp_block_size 8
+
+Quick sweep script (bytes and flops vs GQA/comp):
+
+```
+python3 scripts/rvv_util_sweep.py --L 128 --D 32 --block_size 16 --keep_x1000 120
+# Prints a small markdown table with bytes_read/bytes_written/mac_flops across settings
+```
+
+Tuning guidance:
+
+- `gqa_group_size`: Sharing selection across heads (2–4) typically reduces repeated K/V traffic and compute. Start with 2, validate quality, then try 4. Larger groups may reduce flexibility for head‑specialization.
+- `comp_block_size`: Using compression blocks below `block_size` reduces importance‑score work. A good starting point is `comp_block_size = block_size/2` (or 8–16). If selection quality drops, increase toward `block_size`.
+- Use the sweep script to compare bytes and flops across a small grid for your L/D/block_size; pick the lowest bytes_read that preserves acceptable checksum/quality in your end‑to‑end checks.
 ```
 
 Calibrate suggested scales (synthetic data matching runner initialization):
@@ -82,6 +95,7 @@ Output:
 ```
 cycles=1234567 B=1 H=2 L=256 D=64 window=16
 checksum=...  # sanity
+spec=... checksum=... rvv_bytes_read=... bytes_written=... mac_flops=... [rvv_cycles=N]
 ```
 
 ## Files

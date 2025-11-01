@@ -148,6 +148,18 @@ python3 compiler/mlir/tools/sattn_compile_and_sim.py --mlir input.mlir \
 
 These map to selector environment variables (`SATTN_PREFER_BSR`, `SATTN_PREFER_SW`, `SATTN_HW_L1_BYTES`). With `--use-hw-probe`, the tool runs the RoCC sim briefly to read capability bits and sets `SATTN_DISABLE_BSR`/`SATTN_DISABLE_SW` accordingly before running selection.
 
+One-command profile wrapper
+
+```
+python3 scripts/sattn_profile.py --mlir input.mlir --backend rvv \
+  [--prefer-bsr|--prefer-sw] [--l1-bytes 65536] [--use-hw-probe] [--autotune]
+
+python3 scripts/sattn_profile.py --mlir input.mlir --backend sim \
+  [--prefer-bsr|--prefer-sw] [--l1-bytes 65536] [--use-hw-probe]
+```
+
+This wrapper forwards flags to the appropriate tools and prints the resulting counters/outputs.
+
 ### Dilated/ring sliding-window (new)
 
 Attributes:
