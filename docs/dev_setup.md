@@ -36,3 +36,18 @@ Notes:
   python scripts/build_and_run_rvv_qemu.py
   ```
   This uses `backends/rvv/toolchains/linux-gnu-rvv.cmake` and runs a compare test under QEMU user-mode.
+
+ - One-shot QEMU run via docker (no compose, no PowerShell):
+   ```bash
+   docker run --rm -v $PWD:/workspace -w /workspace sattn/rvv-dev:latest \
+     bash -lc 'cmake --build build/rvv-riscv64 -v && \
+               qemu-riscv64 -L /usr/riscv64-linux-gnu -cpu rv64,v=true,vlen=128,elen=64 \
+               build/rvv-riscv64/sattn_rvv_compare_sw'
+   ```
+   Replace the executable with the runner to try other specs:
+   ```bash
+   docker run --rm -v $PWD:/workspace -w /workspace sattn/rvv-dev:latest \
+     bash -lc 'cmake --build build/rvv-riscv64 -v && \
+               qemu-riscv64 -L /usr/riscv64-linux-gnu -cpu rv64,v=true,vlen=128,elen=64 \
+               build/rvv-riscv64/sattn_rvv_runner --spec sliding_window --L 128 --D 32 --window 8'
+   ```
