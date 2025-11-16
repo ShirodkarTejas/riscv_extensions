@@ -131,7 +131,15 @@ int main(int argc, char** argv) {
     }
   } else if (strcmp(spec, "nm_structured")==0) {
     sattn_nm_params_t p = { .n = (int)nm_n, .m = (int)nm_m };
-    sattn_rvv_nm_structured(Q,K,V,O,s,p);
+    if (strcmp(precision, "bf16")==0) {
+      sattn_rvv_nm_structured_bf16(Q,K,V,O,s,p);
+    } else if (strcmp(precision, "i8")==0) {
+      sattn_rvv_nm_structured_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else if (strcmp(precision, "i4")==0) {
+      sattn_rvv_nm_structured_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else {
+      sattn_rvv_nm_structured(Q,K,V,O,s,p);
+    }
   } else if (strcmp(spec, "topk_per_query")==0) {
     sattn_blocktopk_params_t p = { .block_size=(int)block_size, .keep_ratio=(float)keep_ratio_x1000/1000.0f, .global_tokens=0, .gqa_group_size=(int)gqa_group_size, .comp_block_size=(int)comp_block_size };
     if (strcmp(precision, "bf16")==0) {
@@ -145,10 +153,26 @@ int main(int argc, char** argv) {
     }
   } else if (strcmp(spec, "lsh")==0) {
     sattn_lsh_params_t p = { .buckets = (int)lsh_buckets };
-    sattn_rvv_lsh(Q,K,V,O,s,p);
+    if (strcmp(precision, "bf16")==0) {
+      sattn_rvv_lsh_bf16(Q,K,V,O,s,p);
+    } else if (strcmp(precision, "i8")==0) {
+      sattn_rvv_lsh_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else if (strcmp(precision, "i4")==0) {
+      sattn_rvv_lsh_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else {
+      sattn_rvv_lsh(Q,K,V,O,s,p);
+    }
   } else if (strcmp(spec, "landmark")==0) {
     sattn_landmark_params_t p = { .num_landmarks = (int)(landmarks > 0 ? landmarks : 32), .iters = (int)landmark_iters };
-    sattn_rvv_landmark(Q,K,V,O,s,p);
+    if (strcmp(precision, "bf16")==0) {
+      sattn_rvv_landmark_bf16(Q,K,V,O,s,p);
+    } else if (strcmp(precision, "i8")==0) {
+      sattn_rvv_landmark_i8(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else if (strcmp(precision, "i4")==0) {
+      sattn_rvv_landmark_i4(Q,K,V,O,s,p, scale_q, scale_k, scale_v);
+    } else {
+      sattn_rvv_landmark(Q,K,V,O,s,p);
+    }
   } else if (strcmp(spec, "sliding_window_tiled")==0) {
     sattn_params_t p = { .window_size = (int)window, .block_size = (int)block_size, .dilation = (int)dilation, .wrap = (int)wrap };
     sattn_rvv_sliding_global_tiled(Q,K,V,O,s,p,4);

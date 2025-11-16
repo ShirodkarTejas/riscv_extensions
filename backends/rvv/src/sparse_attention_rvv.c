@@ -162,6 +162,169 @@ static inline uint64_t rdcycle() { return 0ull; }
 
 uint64_t sattn_rdcycle() { return rdcycle(); }
 
+// ============================================================================
+// LSH Quantized Variants (bf16, i8, i4)
+// ============================================================================
+
+void sattn_rvv_lsh_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int buckets = params.buckets > 0 ? params.buckets : 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  
+  // Quantize Q, K, V to bf16
+  unsigned short* Q_bf16 = (unsigned short*)malloc((size_t)(B*H*L*D) * sizeof(unsigned short));
+  unsigned short* K_bf16 = (unsigned short*)malloc((size_t)(B*H*L*D) * sizeof(unsigned short));
+  unsigned short* V_bf16 = (unsigned short*)malloc((size_t)(B*H*L*D) * sizeof(unsigned short));
+  
+  for (int64_t idx = 0; idx < B*H*L*D; ++idx) {
+    Q_bf16[idx] = float_to_bf16_u16(Q[idx]);
+    K_bf16[idx] = float_to_bf16_u16(K[idx]);
+    V_bf16[idx] = float_to_bf16_u16(V[idx]);
+  }
+  
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float denom = 0.f; int my_bucket = (int)(i % buckets);
+      for (int64_t j = 0; j < L; ++j) {
+        if ((int)(j % buckets) != my_bucket) continue;
+        float dot = 0.f;
+        for (int64_t d = 0; d < D; ++d) {
+          float qv = bf16_u16_to_float(Q_bf16[offset_bhld(b,h,i,d,B,H,L,D)]);
+          float kv = bf16_u16_to_float(K_bf16[offset_bhld(b,h,j,d,B,H,L,D)]);
+          dot += qv * kv;
+        }
+        float w = expf(dot * scale); denom += w;
+        for (int64_t d = 0; d < D; ++d) {
+          float vv = bf16_u16_to_float(V_bf16[offset_bhld(b,h,j,d,B,H,L,D)]);
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * vv;
+        }
+        _rvv_ctrs.br += (uint64_t)D * 2 * 2; // Q, K reads (bf16 = 2 bytes)
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O write
+        _rvv_ctrs.mac += (uint64_t)D; // MAC ops
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+  
+  free(Q_bf16); free(K_bf16); free(V_bf16);
+}
+
+void sattn_rvv_lsh_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int buckets = params.buckets > 0 ? params.buckets : 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  
+  // Quantize Q, K, V to i8
+  signed char* Q_i8 = (signed char*)malloc((size_t)(B*H*L*D));
+  signed char* K_i8 = (signed char*)malloc((size_t)(B*H*L*D));
+  signed char* V_i8 = (signed char*)malloc((size_t)(B*H*L*D));
+  
+  for (int64_t idx = 0; idx < B*H*L*D; ++idx) {
+    Q_i8[idx] = f32_to_i8_symmetric(Q[idx], scale_q);
+    K_i8[idx] = f32_to_i8_symmetric(K[idx], scale_k);
+    V_i8[idx] = f32_to_i8_symmetric(V[idx], scale_v);
+  }
+  
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float denom = 0.f; int my_bucket = (int)(i % buckets);
+      for (int64_t j = 0; j < L; ++j) {
+        if ((int)(j % buckets) != my_bucket) continue;
+        float dot = 0.f;
+        for (int64_t d = 0; d < D; ++d) {
+          float qv = dequant_i8(Q_i8[offset_bhld(b,h,i,d,B,H,L,D)], scale_q);
+          float kv = dequant_i8(K_i8[offset_bhld(b,h,j,d,B,H,L,D)], scale_k);
+          dot += qv * kv;
+        }
+        float w = expf(dot * scale); denom += w;
+        for (int64_t d = 0; d < D; ++d) {
+          float vv = dequant_i8(V_i8[offset_bhld(b,h,j,d,B,H,L,D)], scale_v);
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * vv;
+        }
+        _rvv_ctrs.br += (uint64_t)D * 2; // Q, K reads (i8 = 1 byte each)
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O write
+        _rvv_ctrs.mac += (uint64_t)D; // MAC ops
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+  
+  free(Q_i8); free(K_i8); free(V_i8);
+}
+
+void sattn_rvv_lsh_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  const int buckets = params.buckets > 0 ? params.buckets : 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  
+  // Quantize Q, K, V to i4
+  signed char* Q_i4 = (signed char*)malloc((size_t)(B*H*L*D));
+  signed char* K_i4 = (signed char*)malloc((size_t)(B*H*L*D));
+  signed char* V_i4 = (signed char*)malloc((size_t)(B*H*L*D));
+  
+  for (int64_t idx = 0; idx < B*H*L*D; ++idx) {
+    Q_i4[idx] = f32_to_i4_symmetric(Q[idx], scale_q);
+    K_i4[idx] = f32_to_i4_symmetric(K[idx], scale_k);
+    V_i4[idx] = f32_to_i4_symmetric(V[idx], scale_v);
+  }
+  
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float denom = 0.f; int my_bucket = (int)(i % buckets);
+      for (int64_t j = 0; j < L; ++j) {
+        if ((int)(j % buckets) != my_bucket) continue;
+        float dot = 0.f;
+        for (int64_t d = 0; d < D; ++d) {
+          float qv = dequant_i4(Q_i4[offset_bhld(b,h,i,d,B,H,L,D)], scale_q);
+          float kv = dequant_i4(K_i4[offset_bhld(b,h,j,d,B,H,L,D)], scale_k);
+          dot += qv * kv;
+        }
+        float w = expf(dot * scale); denom += w;
+        for (int64_t d = 0; d < D; ++d) {
+          float vv = dequant_i4(V_i4[offset_bhld(b,h,j,d,B,H,L,D)], scale_v);
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * vv;
+        }
+        _rvv_ctrs.br += (uint64_t)D; // Q, K reads (i4 = 0.5 bytes each, so D total)
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O write
+        _rvv_ctrs.mac += (uint64_t)D; // MAC ops
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+  }
+  
+  free(Q_i4); free(K_i4); free(V_i4);
+}
+
 // RVV proxy counters
 void sattn_rvv_landmark(
     const float* Q,
@@ -232,6 +395,236 @@ void sattn_rvv_landmark(
     }
     free(lm); free(C);
   }
+}
+
+// ============================================================================
+// Landmark Quantized Variants (bf16, i8, i4)
+// ============================================================================
+
+void sattn_rvv_landmark_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  int nl = params.num_landmarks > 0 ? params.num_landmarks : (int)(L > 0 ? (L < 32 ? L : 32) : 1);
+  if (nl < 1) nl = 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  int iters = params.iters > 0 ? params.iters : 0;
+  
+  //Quantize K to bf16
+  unsigned short* K_bf16 = (unsigned short*)malloc((size_t)(B*H*L*D) * sizeof(unsigned short));
+  for (int64_t idx = 0; idx < B*H*L*D; ++idx) {
+    K_bf16[idx] = float_to_bf16_u16(K[idx]);
+  }
+  
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    float* C = (float*)malloc((size_t)nl * (size_t)D * sizeof(float));
+    int* lm = (int*)malloc(sizeof(int) * (size_t)nl);
+    for (int i = 0; i < nl; ++i) { lm[i] = (int)((int64_t)i * L / nl); if (lm[i] >= (int)L) lm[i] = (int)L - 1; if (lm[i] < 0) lm[i] = 0; }
+    for (int i = 0; i < nl; ++i) {
+      for (int64_t d = 0; d < D; ++d) C[(size_t)i*D + d] = bf16_u16_to_float(K_bf16[offset_bhld(b,h,lm[i],d,B,H,L,D)]);
+    }
+    for (int it = 0; it < iters; ++it) {
+      int* counts = (int*)calloc((size_t)nl, sizeof(int));
+      float* newC = (float*)calloc((size_t)nl * (size_t)D, sizeof(float));
+      if (!counts || !newC) { if (counts) free(counts); if (newC) free(newC); break; }
+      for (int64_t i = 0; i < L; ++i) {
+        int best = 0; float bestd = 1e30f;
+        for (int c = 0; c < nl; ++c) {
+          float dist = 0.f; for (int64_t d = 0; d < D; ++d) {
+            float kv = bf16_u16_to_float(K_bf16[offset_bhld(b,h,i,d,B,H,L,D)]);
+            float diff = kv - C[(size_t)c*D + d]; dist += diff*diff; }
+          if (dist < bestd) { bestd = dist; best = c; }
+        }
+        counts[best]++;
+        for (int64_t d = 0; d < D; ++d) newC[(size_t)best*D + d] += bf16_u16_to_float(K_bf16[offset_bhld(b,h,i,d,B,H,L,D)]);
+        _rvv_ctrs.br += (uint64_t)D * 2;
+      }
+      for (int c = 0; c < nl; ++c) {
+        int cnt = counts[c] > 0 ? counts[c] : 1;
+        for (int64_t d = 0; d < D; ++d) C[(size_t)c*D + d] = newC[(size_t)c*D + d] / (float)cnt;
+      }
+      free(counts); free(newC);
+    }
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float m = -INFINITY;
+      for (int li = 0; li < nl; ++li) {
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
+        dot *= scale; if (dot > m) m = dot; _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
+      }
+      float denom = 0.f;
+      for (int li = 0; li < nl; ++li) {
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
+        float w = expf(dot * scale - m); denom += w;
+        int j = lm[li];
+        for (int64_t d = 0; d < D; ++d)
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+        _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+    free(lm); free(C);
+  }
+  free(K_bf16);
+}
+
+void sattn_rvv_landmark_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  int nl = params.num_landmarks > 0 ? params.num_landmarks : (int)(L > 0 ? (L < 32 ? L : 32) : 1);
+  if (nl < 1) nl = 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  int iters = params.iters > 0 ? params.iters : 0;
+  
+  signed char* K_i8 = (signed char*)malloc((size_t)(B*H*L*D));
+  for (int64_t idx = 0; idx < B*H*L*D; ++idx) {
+    K_i8[idx] = f32_to_i8_symmetric(K[idx], scale_k);
+  }
+  
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    float* C = (float*)malloc((size_t)nl * (size_t)D * sizeof(float));
+    int* lm = (int*)malloc(sizeof(int) * (size_t)nl);
+    for (int i = 0; i < nl; ++i) { lm[i] = (int)((int64_t)i * L / nl); if (lm[i] >= (int)L) lm[i] = (int)L - 1; if (lm[i] < 0) lm[i] = 0; }
+    for (int i = 0; i < nl; ++i) {
+      for (int64_t d = 0; d < D; ++d) C[(size_t)i*D + d] = dequant_i8(K_i8[offset_bhld(b,h,lm[i],d,B,H,L,D)], scale_k);
+    }
+    for (int it = 0; it < iters; ++it) {
+      int* counts = (int*)calloc((size_t)nl, sizeof(int));
+      float* newC = (float*)calloc((size_t)nl * (size_t)D, sizeof(float));
+      if (!counts || !newC) { if (counts) free(counts); if (newC) free(newC); break; }
+      for (int64_t i = 0; i < L; ++i) {
+        int best = 0; float bestd = 1e30f;
+        for (int c = 0; c < nl; ++c) {
+          float dist = 0.f; for (int64_t d = 0; d < D; ++d) {
+            float kv = dequant_i8(K_i8[offset_bhld(b,h,i,d,B,H,L,D)], scale_k);
+            float diff = kv - C[(size_t)c*D + d]; dist += diff*diff; }
+          if (dist < bestd) { bestd = dist; best = c; }
+        }
+        counts[best]++;
+        for (int64_t d = 0; d < D; ++d) newC[(size_t)best*D + d] += dequant_i8(K_i8[offset_bhld(b,h,i,d,B,H,L,D)], scale_k);
+        _rvv_ctrs.br += (uint64_t)D;
+      }
+      for (int c = 0; c < nl; ++c) {
+        int cnt = counts[c] > 0 ? counts[c] : 1;
+        for (int64_t d = 0; d < D; ++d) C[(size_t)c*D + d] = newC[(size_t)c*D + d] / (float)cnt;
+      }
+      free(counts); free(newC);
+    }
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float m = -INFINITY;
+      for (int li = 0; li < nl; ++li) {
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
+        dot *= scale; if (dot > m) m = dot; _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
+      }
+      float denom = 0.f;
+      for (int li = 0; li < nl; ++li) {
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
+        float w = expf(dot * scale - m); denom += w;
+        int j = lm[li];
+        for (int64_t d = 0; d < D; ++d)
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+        _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+    free(lm); free(C);
+  }
+  free(K_i8);
+}
+
+void sattn_rvv_landmark_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  const int64_t B = shape.B, H = shape.H, L = shape.L, D = shape.D;
+  int nl = params.num_landmarks > 0 ? params.num_landmarks : (int)(L > 0 ? (L < 32 ? L : 32) : 1);
+  if (nl < 1) nl = 1;
+  const float scale = 1.0f / sqrtf((float)D);
+  int iters = params.iters > 0 ? params.iters : 0;
+  
+  signed char* K_i4 = (signed char*)malloc((size_t)(B*H*L*D));
+  for (int64_t idx = 0; idx < B*H*L*D; ++idx) {
+    K_i4[idx] = f32_to_i4_symmetric(K[idx], scale_k);
+  }
+  
+  for (int64_t b = 0; b < B; ++b) for (int64_t h = 0; h < H; ++h) {
+    float* C = (float*)malloc((size_t)nl * (size_t)D * sizeof(float));
+    int* lm = (int*)malloc(sizeof(int) * (size_t)nl);
+    for (int i = 0; i < nl; ++i) { lm[i] = (int)((int64_t)i * L / nl); if (lm[i] >= (int)L) lm[i] = (int)L - 1; if (lm[i] < 0) lm[i] = 0; }
+    for (int i = 0; i < nl; ++i) {
+      for (int64_t d = 0; d < D; ++d) C[(size_t)i*D + d] = dequant_i4(K_i4[offset_bhld(b,h,lm[i],d,B,H,L,D)], scale_k);
+    }
+    for (int it = 0; it < iters; ++it) {
+      int* counts = (int*)calloc((size_t)nl, sizeof(int));
+      float* newC = (float*)calloc((size_t)nl * (size_t)D, sizeof(float));
+      if (!counts || !newC) { if (counts) free(counts); if (newC) free(newC); break; }
+      for (int64_t i = 0; i < L; ++i) {
+        int best = 0; float bestd = 1e30f;
+        for (int c = 0; c < nl; ++c) {
+          float dist = 0.f; for (int64_t d = 0; d < D; ++d) {
+            float kv = dequant_i4(K_i4[offset_bhld(b,h,i,d,B,H,L,D)], scale_k);
+            float diff = kv - C[(size_t)c*D + d]; dist += diff*diff; }
+          if (dist < bestd) { bestd = dist; best = c; }
+        }
+        counts[best]++;
+        for (int64_t d = 0; d < D; ++d) newC[(size_t)best*D + d] += dequant_i4(K_i4[offset_bhld(b,h,i,d,B,H,L,D)], scale_k);
+        _rvv_ctrs.br += (uint64_t)D / 2;
+      }
+      for (int c = 0; c < nl; ++c) {
+        int cnt = counts[c] > 0 ? counts[c] : 1;
+        for (int64_t d = 0; d < D; ++d) C[(size_t)c*D + d] = newC[(size_t)c*D + d] / (float)cnt;
+      }
+      free(counts); free(newC);
+    }
+    for (int64_t i = 0; i < L; ++i) {
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] = 0.f;
+      float m = -INFINITY;
+      for (int li = 0; li < nl; ++li) {
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
+        dot *= scale; if (dot > m) m = dot; _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.mac += (uint64_t)D;
+      }
+      float denom = 0.f;
+      for (int li = 0; li < nl; ++li) {
+        float dot = 0.f; for (int64_t d = 0; d < D; ++d)
+          dot += Q[offset_bhld(b,h,i,d,B,H,L,D)] * C[(size_t)li*D + d];
+        float w = expf(dot * scale - m); denom += w;
+        int j = lm[li];
+        for (int64_t d = 0; d < D; ++d)
+          O[offset_bhld(b,h,i,d,B,H,L,D)] += w * V[offset_bhld(b,h,j,d,B,H,L,D)];
+        _rvv_ctrs.br += (uint64_t)D * sizeof(float) * 2; _rvv_ctrs.bw += (uint64_t)D * sizeof(float);
+      }
+      float inv = 1.f / (denom + 1e-12f);
+      for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
+    }
+    free(lm); free(C);
+  }
+  free(K_i4);
 }
 
 static inline int64_t offset_bhld(int64_t b, int64_t h, int64_t l, int64_t d,
@@ -499,6 +892,9 @@ void sattn_rvv_sliding_global_bf16(
           dot += bf16_u16_to_float(qh) * bf16_u16_to_float(kh);
         }
         dot *= scale; if (dot > m) m = dot;
+        // bf16: 2 bytes per element
+        _rvv_ctrs.br += (uint64_t)D * 2 * 2; // Q and K, 2 bytes each
+        _rvv_ctrs.mac += (uint64_t)D;
       }
       float denom = 0.f;
       for (int64_t j = jl; j < jr; ++j) {
@@ -513,6 +909,9 @@ void sattn_rvv_sliding_global_bf16(
           unsigned short vh = float_to_bf16_u16(V[offset_bhld(b,h,j,d,B,H,L,D)]);
           O[offset_bhld(b,h,i,d,B,H,L,D)] += w * bf16_u16_to_float(vh);
         }
+        _rvv_ctrs.br += (uint64_t)D * 2 * 3; // Q, K, V (2 bytes each)
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O output (fp32)
+        _rvv_ctrs.mac += (uint64_t)D * 2; // dot product + weighted sum
       }
       float inv = 1.f / (denom + 1e-12f);
       for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
@@ -552,6 +951,9 @@ void sattn_rvv_sliding_global_i8(
         }
         float dot = (s_q * s_k) * (float)dot_i32;
         dot *= attn_scale; if (dot > m) m = dot;
+        // i8: 1 byte per element
+        _rvv_ctrs.br += (uint64_t)D * 1 * 2; // Q and K, 1 byte each
+        _rvv_ctrs.mac += (uint64_t)D;
       }
       float denom = 0.f;
       for (int64_t j = jl; j < jr; ++j) {
@@ -568,6 +970,9 @@ void sattn_rvv_sliding_global_i8(
           float v = dequant_i8((int)vi, s_v);
           O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v;
         }
+        _rvv_ctrs.br += (uint64_t)D * 1 * 3; // Q, K, V (1 byte each)
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O output (fp32)
+        _rvv_ctrs.mac += (uint64_t)D * 2; // dot product + weighted sum
       }
       float inv = 1.f / (denom + 1e-12f);
       for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
@@ -607,6 +1012,9 @@ void sattn_rvv_sliding_global_i4(
         }
         float dot = (s_q * s_k) * (float)dot_i32;
         dot *= attn_scale; if (dot > m) m = dot;
+        // i4: 0.5 bytes per element (2 elements per byte)
+        _rvv_ctrs.br += (uint64_t)D; // Q and K, 0.5 bytes each (D total)
+        _rvv_ctrs.mac += (uint64_t)D;
       }
       float denom = 0.f;
       for (int64_t j = jl; j < jr; ++j) {
@@ -623,6 +1031,9 @@ void sattn_rvv_sliding_global_i4(
           float v = dequant_i4(vi, s_v);
           O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v;
         }
+        _rvv_ctrs.br += (uint64_t)D + (uint64_t)D / 2; // Q, K, V (1.5 bytes total for D elements)
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O output (fp32)
+        _rvv_ctrs.mac += (uint64_t)D * 2; // dot product + weighted sum
       }
       float inv = 1.f / (denom + 1e-12f);
       for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
@@ -839,6 +1250,9 @@ void sattn_rvv_block_topk_bf16(
           float kf = bf16_u16_to_float(float_to_bf16_u16(K[offset_bhld(b,h,j,d,B,H,L,D)]));
           dot += qf * kf;
         }
+        // bf16: 2 bytes per element
+        _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * 2 * 2; // Q and K
+        _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
         block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
       }
       for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
@@ -855,11 +1269,18 @@ void sattn_rvv_block_topk_bf16(
           float kf = bf16_u16_to_float(float_to_bf16_u16(K[offset_bhld(b,h,j,d,B,H,L,D)]));
           dot += qf * kf;
         }
+        // bf16: 2 bytes per element for Q, K
+        _rvv_ctrs.br += (uint64_t)D * 2 * 2; // Q and K
+        _rvv_ctrs.mac += (uint64_t)D;
         float w = expf(dot * scale); denom += w;
         for (int64_t d = 0; d < D; ++d) {
           float vf = bf16_u16_to_float(float_to_bf16_u16(V[offset_bhld(b,h,j,d,B,H,L,D)]));
           O[offset_bhld(b,h,i,d,B,H,L,D)] += w * vf;
         }
+        // bf16: 2 bytes for V, fp32 (4 bytes) for O output
+        _rvv_ctrs.br += (uint64_t)D * 2; // V
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O
+        _rvv_ctrs.mac += (uint64_t)D; // weighted sum
       }
       free(sel_idx);
       float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
@@ -899,6 +1320,9 @@ void sattn_rvv_block_topk_i8(
           int ki = (int)f32_to_i8_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
           dot_i32 += qi * ki;
         }
+        // i8: 1 byte per element
+        _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D * 1 * 2; // Q and K
+        _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
         float dot = (s_q * s_k) * (float)dot_i32; block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
       }
       for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
@@ -914,8 +1338,15 @@ void sattn_rvv_block_topk_i8(
           int ki = (int)f32_to_i8_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
           dot_i32 += qi * ki;
         }
+        // i8: 1 byte per element for Q, K
+        _rvv_ctrs.br += (uint64_t)D * 1 * 2; // Q and K
+        _rvv_ctrs.mac += (uint64_t)D;
         float dot = (s_q * s_k) * (float)dot_i32; float w = expf(dot * sc); denom += w;
         for (int64_t d = 0; d < D; ++d) { int vi = (int)f32_to_i8_symmetric(V[offset_bhld(b,h,j,d,B,H,L,D)], s_v); float v = dequant_i8(vi, s_v); O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v; }
+        // i8: 1 byte for V, fp32 (4 bytes) for O output
+        _rvv_ctrs.br += (uint64_t)D * 1; // V
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O
+        _rvv_ctrs.mac += (uint64_t)D; // weighted sum
       }
       free(sel_idx);
       float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
@@ -955,6 +1386,9 @@ void sattn_rvv_block_topk_i4(
           int ki = (int)f32_to_i4_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
           dot_i32 += qi * ki;
         }
+        // i4: 0.5 bytes per element (4 bits)
+        _rvv_ctrs.br += (uint64_t)cnt * (uint64_t)D / 2 * 2; // Q and K (0.5 bytes each)
+        _rvv_ctrs.mac += (uint64_t)cnt * (uint64_t)D;
         float dot = (s_q * s_k) * (float)dot_i32; block_scores[nb] = cnt > 0 ? (dot / (float)cnt) : -1e30f; block_idx[nb] = (int)nb;
       }
       for (int64_t x = 0; x < num_blocks - 1; ++x) for (int64_t y = x + 1; y < num_blocks; ++y)
@@ -970,8 +1404,15 @@ void sattn_rvv_block_topk_i4(
           int ki = (int)f32_to_i4_symmetric(K[offset_bhld(b,h,j,d,B,H,L,D)], s_k);
           dot_i32 += qi * ki;
         }
+        // i4: 0.5 bytes per element (4 bits) for Q, K
+        _rvv_ctrs.br += (uint64_t)D / 2 * 2; // Q and K (0.5 bytes each)
+        _rvv_ctrs.mac += (uint64_t)D;
         float dot = (s_q * s_k) * (float)dot_i32; float w = expf(dot * sc); denom += w;
         for (int64_t d = 0; d < D; ++d) { int vi = (int)f32_to_i4_symmetric(V[offset_bhld(b,h,j,d,B,H,L,D)], s_v); float v = dequant_i4(vi, s_v); O[offset_bhld(b,h,i,d,B,H,L,D)] += w * v; }
+        // i4: 0.5 bytes for V, fp32 (4 bytes) for O output
+        _rvv_ctrs.br += (uint64_t)D / 2; // V (0.5 bytes)
+        _rvv_ctrs.bw += (uint64_t)D * sizeof(float); // O
+        _rvv_ctrs.mac += (uint64_t)D; // weighted sum
       }
       free(sel_idx);
       float inv = 1.f / (denom + 1e-12f); for (int64_t d = 0; d < D; ++d) O[offset_bhld(b,h,i,d,B,H,L,D)] *= inv;
@@ -1089,6 +1530,67 @@ void sattn_rvv_nm_structured(
   p.keep_ratio = keep;
   p.global_tokens = 0;
   sattn_rvv_block_topk(Q,K,V,O,shape,p);
+}
+
+// Quantized variants for nm_structured (just wrappers around block_topk quantized variants)
+void sattn_rvv_nm_structured_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params) {
+  int M = params.m > 0 ? params.m : 64;
+  float keep = (params.n > 0 && params.m > 0) ? ((float)params.n / (float)params.m) : 0.25f;
+  sattn_blocktopk_params_t p;
+  p.block_size = M;
+  p.keep_ratio = keep;
+  p.global_tokens = 0;
+  p.gqa_group_size = 1;
+  p.comp_block_size = 0;
+  sattn_rvv_block_topk_bf16(Q,K,V,O,shape,p);
+}
+
+void sattn_rvv_nm_structured_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  int M = params.m > 0 ? params.m : 64;
+  float keep = (params.n > 0 && params.m > 0) ? ((float)params.n / (float)params.m) : 0.25f;
+  sattn_blocktopk_params_t p;
+  p.block_size = M;
+  p.keep_ratio = keep;
+  p.global_tokens = 0;
+  p.gqa_group_size = 1;
+  p.comp_block_size = 0;
+  sattn_rvv_block_topk_i8(Q,K,V,O,shape,p, scale_q, scale_k, scale_v);
+}
+
+void sattn_rvv_nm_structured_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v) {
+  int M = params.m > 0 ? params.m : 64;
+  float keep = (params.n > 0 && params.m > 0) ? ((float)params.n / (float)params.m) : 0.25f;
+  sattn_blocktopk_params_t p;
+  p.block_size = M;
+  p.keep_ratio = keep;
+  p.global_tokens = 0;
+  p.gqa_group_size = 1;
+  p.comp_block_size = 0;
+  sattn_rvv_block_topk_i4(Q,K,V,O,shape,p, scale_q, scale_k, scale_v);
 }
 
 #ifdef __riscv_vector

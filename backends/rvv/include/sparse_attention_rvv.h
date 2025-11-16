@@ -173,6 +173,36 @@ void sattn_rvv_nm_structured(
     sattn_shape_t shape,
     sattn_nm_params_t params);
 
+void sattn_rvv_nm_structured_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params);
+
+void sattn_rvv_nm_structured_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
+
+void sattn_rvv_nm_structured_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_nm_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
+
 // LSH/hashed buckets – simplified: token j participates for query i if (j % buckets) == (i % buckets)
 typedef struct {
   int buckets; // number of hash buckets
@@ -185,6 +215,36 @@ void sattn_rvv_lsh(
     float* O,
     sattn_shape_t shape,
     sattn_lsh_params_t params);
+
+void sattn_rvv_lsh_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params);
+
+void sattn_rvv_lsh_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
+
+void sattn_rvv_lsh_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_lsh_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
 
 // Landmark attention: compress sequence to num_landmarks representatives and attend over them
 typedef struct {
@@ -199,6 +259,36 @@ void sattn_rvv_landmark(
     float* O,
     sattn_shape_t shape,
     sattn_landmark_params_t params);
+
+void sattn_rvv_landmark_bf16(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params);
+
+void sattn_rvv_landmark_i8(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
+
+void sattn_rvv_landmark_i4(
+    const float* Q,
+    const float* K,
+    const float* V,
+    float* O,
+    sattn_shape_t shape,
+    sattn_landmark_params_t params,
+    float scale_q,
+    float scale_k,
+    float scale_v);
 
 // Tiled variant of LSH selection
 void sattn_rvv_lsh_tiled(
