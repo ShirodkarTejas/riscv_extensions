@@ -1,0 +1,145 @@
+# Makefile for custom RISC-V instruction tests
+# Usage:
+#   make -f Makefile_instruction_tests all        # Build all tests
+#   make -f Makefile_instruction_tests clean      # Clean build artifacts
+#   make -f Makefile_instruction_tests run-mmio   # Run MMIO mode test
+#   make -f Makefile_instruction_tests run-csr    # Run CSR mode test
+
+# Toolchain configuration
+RISCV_PREFIX ?= riscv64-unknown-elf-
+CC = $(RISCV_PREFIX)gcc
+AS = $(RISCV_PREFIX)as
+OBJDUMP = $(RISCV_PREFIX)objdump
+OBJCOPY = $(RISCV_PREFIX)objcopy
+
+# Paths
+ROOT_DIR = ../../..
+INCLUDE_DIRS = -I$(ROOT_DIR)
+
+# Compiler flags
+CFLAGS_COMMON = -march=rv64gc -O2 -Wall -Wextra $(INCLUDE_DIRS)
+CFLAGS_MMIO = $(CFLAGS_COMMON)
+CFLAGS_CSR = $(CFLAGS_COMMON) -DSATTN_USE_CSR_INSTRUCTIONS
+
+ASFLAGS = -march=rv64gc
+LDFLAGS = -static
+
+# Test targets
+TEST_C_MMIO = test_instruction_encoding_mmio
+TEST_C_CSR = test_instruction_encoding_csr
+TEST_ASM = test_instruction_asm
+TEST_COMBINED = test_combined
+
+# Source files
+SRC_C = test_instruction_encoding.c
+SRC_ASM = test_instruction_asm.S
+
+# Object files
+OBJ_ASM = test_instruction_asm.o
+
+# Build all tests
+all: $(TEST_C_MMIO) $(TEST_C_CSR) $(TEST_ASM) $(TEST_COMBINED)
+
+# C test - MMIO mode (for simulation)
+$(TEST_C_MMIO): $(SRC_C)
+	$(CC) $(CFLAGS_MMIO) $(LDFLAGS) -o $@ $<
+	@echo "Built: $@ (MMIO mode)"
+
+# C test - CSR/instruction mode (for hardware)
+$(TEST_C_CSR): $(SRC_C)
+	$(CC) $(CFLAGS_CSR) $(LDFLAGS) -o $@ $<
+	@echo "Built: $@ (CSR instruction mode)"
+
+# Assembly test
+$(OBJ_ASM): $(SRC_ASM)
+	$(AS) $(ASFLAGS) -o $@ $<
+
+$(TEST_ASM): $(OBJ_ASM)
+	$(CC) $(LDFLAGS) -o $@ $<
+	@echo "Built: $@"
+
+# Combined test (C + assembly)
+$(TEST_COMBINED): $(SRC_C) $(SRC_ASM)
+	$(CC) $(CFLAGS_CSR) $(LDFLAGS) -o $@ $(SRC_C) $(SRC_ASM)
+	@echo "Built: $@ (combined C + assembly)"
+
+# Generate disassembly
+disasm: $(TEST_C_CSR) $(TEST_ASM)
+	$(OBJDUMP) -d $(TEST_C_CSR) > $(TEST_C_CSR).disasm
+	$(OBJDUMP) -d $(TEST_ASM) > $(TEST_ASM).disasm
+	@echo "Disassembly files generated"
+
+# Run tests (requires RISC-V simulator)
+run-mmio: $(TEST_C_MMIO)
+	@echo "Running MMIO mode test..."
+	qemu-riscv64 ./$(TEST_C_MMIO) || spike --isa=rv64gc pk ./$(TEST_C_MMIO)
+
+run-csr: $(TEST_C_CSR)
+	@echo "Running CSR instruction mode test..."
+	qemu-riscv64 ./$(TEST_C_CSR) || spike --isa=rv64gc pk ./$(TEST_C_CSR)
+
+run-asm: $(TEST_ASM)
+	@echo "Running assembly test..."
+	qemu-riscv64 ./$(TEST_ASM) || spike --isa=rv64gc pk ./$(TEST_ASM)
+
+run-all: run-mmio run-csr run-asm
+	@echo "All tests completed"
+
+# Verify instruction encodings
+verify-encoding: $(OBJ_ASM)
+	@echo "Verifying instruction encodings..."
+	@$(OBJDUMP) -d $(OBJ_ASM) | grep -A1 "\.word"
+	@echo ""
+	@echo "Expected encodings:"
+	@echo "  0x0000002B - blk_reduce (funct3=000)"
+	@echo "  0x0000102B - topk_idx (funct3=001)"
+	@echo "  0x0000202B - gath2d (funct3=010)"
+	@echo "  0x0000302B - scat2d (funct3=011)"
+	@echo "  0x0000402B - spdot_bsr (funct3=100)"
+	@echo "  0x0000502B - softmax_fused (funct3=101)"
+	@echo "  0x0000602B - spmm_bsr (funct3=110)"
+
+# Check for toolchain
+check-toolchain:
+	@which $(CC) > /dev/null || (echo "Error: $(CC) not found. Set RISCV_PREFIX or install RISC-V toolchain"; exit 1)
+	@$(CC) --version | head -n1
+	@echo "Toolchain OK"
+
+# Clean build artifacts
+clean:
+	rm -f $(TEST_C_MMIO) $(TEST_C_CSR) $(TEST_ASM) $(TEST_COMBINED)
+	rm -f $(OBJ_ASM)
+	rm -f *.o *.elf *.disasm
+	@echo "Cleaned build artifacts"
+
+# Help
+help:
+	@echo "RISC-V Sparse Attention Custom Instruction Tests"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all              - Build all tests"
+	@echo "  $(TEST_C_MMIO)   - Build C test (MMIO mode)"
+	@echo "  $(TEST_C_CSR)    - Build C test (CSR instruction mode)"
+	@echo "  $(TEST_ASM)      - Build assembly test"
+	@echo "  $(TEST_COMBINED) - Build combined C + assembly test"
+	@echo "  disasm           - Generate disassembly files"
+	@echo "  run-mmio         - Run MMIO mode test"
+	@echo "  run-csr          - Run CSR instruction mode test"
+	@echo "  run-asm          - Run assembly test"
+	@echo "  run-all          - Run all tests"
+	@echo "  verify-encoding  - Verify instruction encodings"
+	@echo "  check-toolchain  - Check RISC-V toolchain"
+	@echo "  clean            - Remove build artifacts"
+	@echo "  help             - Show this message"
+	@echo ""
+	@echo "Configuration:"
+	@echo "  RISCV_PREFIX=$(RISCV_PREFIX)"
+	@echo "  CC=$(CC)"
+	@echo ""
+	@echo "Usage examples:"
+	@echo "  make -f Makefile_instruction_tests all"
+	@echo "  make -f Makefile_instruction_tests run-mmio"
+	@echo "  RISCV_PREFIX=riscv64-linux-gnu- make -f Makefile_instruction_tests all"
+
+.PHONY: all run-mmio run-csr run-asm run-all disasm verify-encoding check-toolchain clean help
+

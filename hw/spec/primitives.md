@@ -45,8 +45,9 @@ Optional (future): gelu_ln_fuse for attention-FFN fusion.
   - spdot_bsr: peak-close MMA-style throughput; hide gather via prefetch FIFO.
   - softmax_fused: tree reductions within tile; 1 cycle per exp in CORDIC/LUT pipeline.
 
-## RoCC command IDs (tentative)
+## RoCC command IDs and Custom Instruction Encoding
 
+### Legacy MMIO Command IDs
 - 0x10: blk_reduce
 - 0x11: topk_idx
 - 0x12: gath2d
@@ -55,7 +56,42 @@ Optional (future): gelu_ln_fuse for attention-FFN fusion.
 - 0x15: softmax_fused
 - 0x16: spmm_bsr
 
-Each command operates on CSRs specifying base addresses, strides, sizes, and pointers to index tables. Completion is signaled via an IRQ or status CSR.
+### Custom RISC-V Instruction Encoding
+
+The primitives are also exposed as custom RISC-V instructions using the `custom-1` opcode (0x2B):
+
+**Instruction Format**: R-type
+```
+[funct7=0x00][rs2][rs1][funct3][rd][0x2B]
+```
+
+**funct3 Mapping** (primitive selector):
+- 000 (0x0): blk_reduce
+- 001 (0x1): topk_idx
+- 010 (0x2): gath2d
+- 011 (0x3): scat2d
+- 100 (0x4): spdot_bsr
+- 101 (0x5): softmax_fused
+- 110 (0x6): spmm_bsr
+- 111 (0x7): reserved
+
+**Parameter Passing**: Via Custom CSRs (0x7C0-0x7DF)
+- Base pointers: 0x7C0-0x7C5 (q, k, v, o, idx, stride)
+- Dimensions: 0x7C6-0x7CB (m_rows, head_dim_d, block_size, k_blocks, s_tokens, scale)
+- Status/control: 0x7CE-0x7CF
+
+**Programming Models**:
+1. **Instruction-based** (hardware): CSR writes + custom instruction issue
+2. **MMIO-based** (simulation): Memory-mapped register writes
+
+Both models are supported via a unified C API that selects the appropriate backend at compile time.
+
+For details, see:
+- `instruction_encoding.md` - Complete instruction specification
+- `csr_map.md` - CSR address map and semantics
+- `assembly_guide.md` - Programming examples and best practices
+
+Completion is signaled via status CSR (0x7CE) DONE bit or MMIO status register.
 
 ## Operand semantics
 

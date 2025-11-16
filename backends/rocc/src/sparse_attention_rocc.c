@@ -1,12 +1,31 @@
 #include "backends/rocc/include/sparse_attention_rocc.h"
 #include "hw/runtime/rocc_driver.h"
+#include "hw/spec/rocc_intrinsics.h"
 
 #include <string.h>
+
+// This backend supports two modes:
+// 1. MMIO mode (default): Uses memory-mapped registers for simulation/testing
+// 2. CSR-instruction mode: Uses custom RISC-V instructions with CSR parameter passing
+//
+// To enable CSR-instruction mode, compile with -DSATTN_USE_CSR_INSTRUCTIONS
+// The rocc_intrinsics.h header provides a unified API that automatically selects
+// the appropriate implementation based on this flag.
 
 int sattn_rocc_init(uintptr_t mmio_base, sattn_rocc_ctx_t* ctx) {
   if (!ctx) return -1;
   ctx->mmio_base = mmio_base;
   ctx->regs = (void*)sattn_rocc_map(mmio_base);
+  
+  #ifdef SATTN_USE_CSR_INSTRUCTIONS
+  // In CSR mode, check hardware capabilities
+  uint32_t hw_version = sattn_get_hw_version();
+  uint32_t hw_caps = sattn_get_hw_caps();
+  // Could validate required capabilities here
+  (void)hw_version;
+  (void)hw_caps;
+  #endif
+  
   return 0;
 }
 

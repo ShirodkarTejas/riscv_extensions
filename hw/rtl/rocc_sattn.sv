@@ -1,5 +1,6 @@
 // Simple MMIO-style skeleton for a RoCC-like Sparse Attention accelerator
 // This does not implement compute; it latches command descriptors and asserts done.
+// Supports both MMIO and CSR-based instruction interfaces.
 
 module rocc_sattn #(
   parameter ADDR_WIDTH = 16,
@@ -8,13 +9,25 @@ module rocc_sattn #(
   input  logic                 clk,
   input  logic                 rstn,
 
-  // MMIO interface (simple register file)
+  // MMIO interface (simple register file, legacy)
   input  logic                 mmio_wen,
   input  logic                 mmio_ren,
   input  logic [ADDR_WIDTH-1:0] mmio_addr,
   input  logic [DATA_WIDTH-1:0] mmio_wdata,
   output logic [DATA_WIDTH-1:0] mmio_rdata,
 
+  // Custom instruction interface (new)
+  input  logic                 inst_valid,     // Instruction valid
+  input  logic [31:0]          inst_bits,      // Instruction word
+  output logic                 inst_ready,     // Ready for instruction
+  
+  // CSR interface
+  input  logic                 csr_wen,        // CSR write enable
+  input  logic [11:0]          csr_addr,       // CSR address
+  input  logic [DATA_WIDTH-1:0] csr_wdata,     // CSR write data
+  input  logic                 csr_ren,        // CSR read enable
+  output logic [DATA_WIDTH-1:0] csr_rdata,     // CSR read data
+  
   // Status
   output logic                 busy,
   output logic                 done
@@ -49,6 +62,7 @@ module rocc_sattn #(
   localparam REG_IDX_WADDR = 16'h0070; // write index RAM address
   localparam REG_IDX_WDATA = 16'h0078; // write index RAM data (commit)
 
+  // Shared register state (accessible via both MMIO and CSR interfaces)
   logic [63:0] q_base, k_base, v_base, o_base, idx_base, strd_base;
   logic [31:0] m_rows, head_dim_d, block_size, k_blocks, s_tokens;
   logic [31:0] scale_fp_bits;
@@ -56,6 +70,28 @@ module rocc_sattn #(
   logic [31:0] comp_block_size;
   logic [31:0] hw_version;
   logic [31:0] hw_caps;
+  logic [31:0] status_reg;
+  logic [31:0] error_reg;
+  
+  // CSR address definitions (matching hw/spec/csr_map.md)
+  localparam CSR_SATTN_Q_BASE       = 12'h7C0;
+  localparam CSR_SATTN_K_BASE       = 12'h7C1;
+  localparam CSR_SATTN_V_BASE       = 12'h7C2;
+  localparam CSR_SATTN_O_BASE       = 12'h7C3;
+  localparam CSR_SATTN_IDX_BASE     = 12'h7C4;
+  localparam CSR_SATTN_STRIDE_BASE  = 12'h7C5;
+  localparam CSR_SATTN_M_ROWS       = 12'h7C6;
+  localparam CSR_SATTN_HEAD_DIM_D   = 12'h7C7;
+  localparam CSR_SATTN_BLOCK_SIZE   = 12'h7C8;
+  localparam CSR_SATTN_K_BLOCKS     = 12'h7C9;
+  localparam CSR_SATTN_S_TOKENS     = 12'h7CA;
+  localparam CSR_SATTN_SCALE_FP     = 12'h7CB;
+  localparam CSR_SATTN_GQA_GROUP_SIZE = 12'h7CC;
+  localparam CSR_SATTN_COMP_BLOCK_SIZE = 12'h7CD;
+  localparam CSR_SATTN_STATUS       = 12'h7CE;
+  localparam CSR_SATTN_ERROR        = 12'h7CF;
+  localparam CSR_SATTN_HW_VERSION   = 12'h7D8;
+  localparam CSR_SATTN_HW_CAPS      = 12'h7D9;
 
   typedef enum logic [7:0] {
     CMD_NOP         = 8'h00,
@@ -82,6 +118,53 @@ module rocc_sattn #(
   assign busy = (state == RUN);
   assign done = (state == DONE);
 
+  // Instruction decoder integration
+  logic        decode_valid;
+  logic [2:0]  decode_primitive;
+  logic [6:0]  decode_funct7;
+  logic [4:0]  decode_rs1, decode_rs2, decode_rd;
+  logic        decode_illegal;
+  
+  sattn_inst_decode u_inst_decode (
+    .clk(clk),
+    .rstn(rstn),
+    .inst_valid(inst_valid),
+    .inst_bits(inst_bits),
+    .inst_ready(inst_ready),
+    .decode_valid(decode_valid),
+    .primitive(decode_primitive),
+    .funct7(decode_funct7),
+    .rs1(decode_rs1),
+    .rs2(decode_rs2),
+    .rd(decode_rd),
+    .illegal_inst(decode_illegal)
+  );
+  
+  // Convert decoded primitive to cmd_reg format when instruction issued
+  logic inst_cmd_seen;
+  always_ff @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+      inst_cmd_seen <= 1'b0;
+    end else begin
+      if (decode_valid && !decode_illegal) begin
+        inst_cmd_seen <= 1'b1;
+        // Map funct3 primitive to cmd_reg encoding
+        case (decode_primitive)
+          3'b000: cmd_reg <= CMD_BLK_REDUCE;
+          3'b001: cmd_reg <= CMD_TOPK_IDX;
+          3'b010: cmd_reg <= CMD_GATH2D;
+          3'b011: cmd_reg <= CMD_SCAT2D;
+          3'b100: cmd_reg <= CMD_SPDOT_BSR;
+          3'b101: cmd_reg <= CMD_SOFTMAX_FUS;
+          3'b110: cmd_reg <= CMD_SPMM_BSR;
+          default: cmd_reg <= CMD_NOP;
+        endcase
+      end else if (state == DONE) begin
+        inst_cmd_seen <= 1'b0;
+      end
+    end
+  end
+  
   // spdot_bsr core integration
   logic core_start, core_busy, core_done;
   wire  is_spdot = (cmd_reg == CMD_SPDOT_BSR);
@@ -231,9 +314,84 @@ module rocc_sattn #(
       default:       mmio_rdata = '0;
     endcase
   end
+  
+  // ============================================================================
+  // CSR Register File (new instruction-based interface)
+  // ============================================================================
+  
+  // Update status_reg based on FSM state
+  always_comb begin
+    status_reg[0] = (state == DONE);      // DONE bit
+    status_reg[1] = (state == RUN);       // BUSY bit
+    status_reg[2] = (state == IDLE);      // READY bit
+    status_reg[3] = (error_reg != 32'd0); // ERROR bit
+    status_reg[31:4] = 28'd0;             // Reserved
+  end
+  
+  // CSR write
+  always_ff @(posedge clk or negedge rstn) begin
+    if (!rstn) begin
+      error_reg <= 32'd0;
+    end else if (csr_wen) begin
+      case (csr_addr)
+        CSR_SATTN_Q_BASE:       q_base <= csr_wdata;
+        CSR_SATTN_K_BASE:       k_base <= csr_wdata;
+        CSR_SATTN_V_BASE:       v_base <= csr_wdata;
+        CSR_SATTN_O_BASE:       o_base <= csr_wdata;
+        CSR_SATTN_IDX_BASE:     idx_base <= csr_wdata;
+        CSR_SATTN_STRIDE_BASE:  strd_base <= csr_wdata;
+        CSR_SATTN_M_ROWS:       m_rows <= csr_wdata[31:0];
+        CSR_SATTN_HEAD_DIM_D:   head_dim_d <= csr_wdata[31:0];
+        CSR_SATTN_BLOCK_SIZE:   block_size <= csr_wdata[31:0];
+        CSR_SATTN_K_BLOCKS:     k_blocks <= csr_wdata[31:0];
+        CSR_SATTN_S_TOKENS:     s_tokens <= csr_wdata[31:0];
+        CSR_SATTN_SCALE_FP:     scale_fp_bits <= csr_wdata[31:0];
+        CSR_SATTN_GQA_GROUP_SIZE: gqa_group_size <= csr_wdata[31:0];
+        CSR_SATTN_COMP_BLOCK_SIZE: comp_block_size <= csr_wdata[31:0];
+        CSR_SATTN_STATUS: begin
+          // Writing to status can clear done flag or perform soft reset
+          if (csr_wdata[0]) error_reg <= 32'd0; // Clear done also clears error
+        end
+        default: ; // Read-only or unimplemented CSRs ignored
+      endcase
+    end else if (state == DONE && is_spdot) begin
+      // Error conditions could be set here based on operation results
+      // For now, errors are only cleared, not set by hardware
+    end
+  end
+  
+  // CSR read
+  always_comb begin
+    csr_rdata = '0;
+    if (csr_ren) begin
+      case (csr_addr)
+        CSR_SATTN_Q_BASE:       csr_rdata = q_base;
+        CSR_SATTN_K_BASE:       csr_rdata = k_base;
+        CSR_SATTN_V_BASE:       csr_rdata = v_base;
+        CSR_SATTN_O_BASE:       csr_rdata = o_base;
+        CSR_SATTN_IDX_BASE:     csr_rdata = idx_base;
+        CSR_SATTN_STRIDE_BASE:  csr_rdata = strd_base;
+        CSR_SATTN_M_ROWS:       csr_rdata = {32'd0, m_rows};
+        CSR_SATTN_HEAD_DIM_D:   csr_rdata = {32'd0, head_dim_d};
+        CSR_SATTN_BLOCK_SIZE:   csr_rdata = {32'd0, block_size};
+        CSR_SATTN_K_BLOCKS:     csr_rdata = {32'd0, k_blocks};
+        CSR_SATTN_S_TOKENS:     csr_rdata = {32'd0, s_tokens};
+        CSR_SATTN_SCALE_FP:     csr_rdata = {32'd0, scale_fp_bits};
+        CSR_SATTN_GQA_GROUP_SIZE: csr_rdata = {32'd0, gqa_group_size};
+        CSR_SATTN_COMP_BLOCK_SIZE: csr_rdata = {32'd0, comp_block_size};
+        CSR_SATTN_STATUS:       csr_rdata = {32'd0, status_reg};
+        CSR_SATTN_ERROR:        csr_rdata = {32'd0, error_reg};
+        CSR_SATTN_HW_VERSION:   csr_rdata = {32'd0, hw_version};
+        CSR_SATTN_HW_CAPS:      csr_rdata = {32'd0, hw_caps};
+        default:                csr_rdata = '0;
+      endcase
+    end
+  end
 
-  // FSM: when cmd written, go RUN; for spdot use core_done, otherwise variable latency
+  // FSM: when cmd written (MMIO or instruction), go RUN; for spdot use core_done, otherwise variable latency
   logic cmd_seen;
+  wire any_cmd_seen = cmd_seen || inst_cmd_seen;  // Either MMIO or instruction command
+  
   always_ff @(posedge clk or negedge rstn) begin
     if (!rstn) begin
       state <= IDLE; cmd_seen <= 1'b0;
@@ -303,7 +461,7 @@ module rocc_sattn #(
     sof_start = 1'b0;
     spm_start = 1'b0;
     unique case (state)
-      IDLE: if (cmd_seen && cmd_reg != CMD_NOP) begin
+      IDLE: if (any_cmd_seen && cmd_reg != CMD_NOP) begin
                if (is_spdot) begin
                  state_n = GATHER;
                  g_start = 1'b1;
