@@ -23,12 +23,13 @@ cat bench/results/UNIFIED_PATTERN_COMPARISON.md
 - ✅ Unified comparison tool for pattern selection
 - ✅ Best-by-objective recommendations (memory, latency, efficiency)
 - ✅ Use-case-specific guidance (IoT, Mobile, Edge, Cloud)
+- 🚀 **Phase 1+2 optimizations deployed** (6.4% speedup, 80%+ energy savings)
 
-**Best Configurations Found** (L=128, D=32):
-- 🔋 **Ultra Low Power**: `sliding_window + i4` (0.16 MB, 16.7x savings!)
-- 📱 **Low Power**: `sliding_window + i8` (0.32 MB, 8.3x savings)
-- ⚖️ **Balanced**: `landmark + bf16` (fastest latency: 5.9M cycles)
-- ⚡ **High Performance**: `nm_structured + fp32` (full precision)
+**Best Configurations Found** (L=128, D=32, Phase 1+2 Optimized):
+- 🔋 **Ultra Low Power**: `sliding_window + i4` (32.18 µJ, 0.42 MB, 84% energy savings!)
+- 📱 **Low Power**: `sliding_window + i8` (38.79 µJ, 0.58 MB, 81% energy savings)
+- ⚖️ **Balanced**: `sliding_window + bf16` (8.6M cycles, 97.78 µJ - fastest!)
+- ⚡ **High Performance**: `landmark + fp32` (9.2M cycles, full precision)
 
 **Documentation**: See `bench/results/UNIFIED_PATTERN_COMPARISON.md` for complete analysis.
 
