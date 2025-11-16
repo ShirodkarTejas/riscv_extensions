@@ -1,5 +1,9 @@
 numpy>=1.22
 pytest>=7.0
+
+# Optional: For visualization tools (bench/visualize_benchmarks.py)
+# matplotlib>=3.5.0
+
 # Optional (GPU)
 # triton>=2.0
 # torch>=2.1

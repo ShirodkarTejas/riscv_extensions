@@ -127,14 +127,16 @@ python bench/create_unified_comparison.py --L 128 --D 32
 cat bench/results/UNIFIED_PATTERN_COMPARISON.md
 ```
 
-**Key Findings** (L=128, D=32):
+**Key Findings** (L=128, D=32, Real QEMU Results):
 
-| Use Case | Best Pattern | Precision | Memory | Savings |
-|----------|--------------|-----------|--------|---------|
-| 🔋 **Ultra Low Power** | `sliding_window` | **i4** | **0.16 MB** | **16.7x!** |
-| 📱 **Low Power** | `sliding_window` | **i8** | 0.32 MB | 8.3x |
-| ⚖️ **Balanced** | `landmark` | **bf16** | 1.01 MB | Fastest! |
-| ⚡ **High Performance** | `nm_structured` | **fp32** | 5.25 MB | Full precision |
+| Use Case | Best Pattern | Precision | Energy | Memory | Cycles |
+|----------|--------------|-----------|--------|--------|--------|
+| 🔋 **Ultra Low Power** | `sliding_window` | **i4** | **32.17 µJ** | **0.42 MB** | 15.3M |
+| 📱 **Low Power** | `sliding_window` | **i8** | 38.79 µJ | 0.58 MB | 15.3M |
+| ⚖️ **Balanced** | `sliding_window` | **bf16** | 97.79 µJ | 1.69 MB | **9.0M** (fastest!) |
+| ⚡ **High Performance** | `landmark` | **fp32** | 131.71 µJ | 2.50 MB | 9.8M |
+
+**Energy Savings vs FP32**: i4 = **84%**, i8 = **81%**, bf16 = **51%**
 
 ### 📊 Per-Pattern Variants
 
@@ -148,40 +150,43 @@ Pattern (e.g., sliding_window)
   └── high_performance  (fp32)  → Full precision 🎯
 ```
 
-**All 5 Patterns Fully Quantized**:
-- ✅ `sliding_window` - Best for power-constrained (up to 16.7x savings!)
-- ✅ `block_local_global` - Hybrid local+global (up to 8.5x savings)
-- ✅ `nm_structured` - N:M structured sparsity (up to 6.0x savings)
-- ✅ `lsh` - Hash-based attention (up to 8.0x savings)
-- ✅ `landmark` - Centroid-based, fastest latency
+**All 5 Patterns Fully Quantized** (Real Results):
+- ✅ `sliding_window` - **Best energy** (32 µJ i4, 84% savings vs fp32)
+- ✅ `block_local_global` - Best efficiency (12.0M GOPs/W at i4)
+- ✅ `nm_structured` - Good balance (136 µJ i4, 58% savings)
+- ✅ `lsh` - Moderate savings (218 µJ i4, 40% savings)
+- ✅ `landmark` - Fastest cycles (9.0-10M), minimal quantization benefit
 
-**Quick Start**:
+**Quick Start - Run Real Benchmarks**:
 ```bash
-# Compare ALL patterns and profiles in one report
-python bench/create_unified_comparison.py --L 128 --D 32
+# 1. Run comprehensive benchmarks in Docker (all 20 configs)
+./scripts/run_benchmark_in_docker.sh --L 128 --D 32
 
-# Benchmark a specific pattern across all precisions
-python bench/comprehensive_benchmark.py \
-  --pattern sliding_window \
-  --L 128 --D 32
+# 2. Generate detailed report with energy metrics
+python bench/generate_comprehensive_report.py \
+  --input bench/results/comprehensive_docker_results.json
 
-# Compare variants for a single pattern
-python bench/compare_variants.py \
-  --pattern lsh \
+# 3. Find optimal config for your constraints
+python bench/variant_selector.py \
+  --max-memory-mb 1.0 \
+  --max-energy-uj 50 \
   --L 128 --D 32
 ```
 
 **Documentation**:
-- 🏆 **`bench/results/UNIFIED_PATTERN_COMPARISON.md`** - **ALL patterns compared!** (Recommended starting point)
-- 📊 `bench/results/ALL_VARIANTS_ALL_PRECISIONS.md` - Detailed sliding_window analysis
-- 📈 `bench/results/PATTERN_SUPPORT_STATUS.md` - Implementation status for all patterns
-- 📘 `docs/NEXT_STEPS_BENCHMARKING.md` - Quick start guide
-- 📈 `docs/benchmarking_strategy.md` - Complete metrics and variant definitions
+- 🏆 **`COMPLETE_BENCHMARK_WORKFLOW.md`** - **Complete benchmarking guide** (START HERE!)
+- 📊 **`bench/results/COMPREHENSIVE_BENCHMARK_REPORT.md`** - Real QEMU results with energy metrics
+- 📈 `bench/results/UNIFIED_PATTERN_COMPARISON.md` - All patterns compared
+- 🔋 `docs/ENERGY_ACCURACY_IMPLEMENTATION_COMPLETE.md` - Energy & accuracy module details
+- 📘 `docs/benchmarking_strategy.md` - Complete metrics and variant definitions
 - 📋 `docs/benchmarking_implementation_plan.md` - Development roadmap
 
 ## Status
 - CPU ref, GPU sliding-window + block-topk, **RVV baseline ready and tested on QEMU** ✅
 - MLIR dialect/pass stubs, RoCC skeleton, IMC proxy ready
 - **Custom RISC-V instructions**: Specification, hardware decoder, CSR interface, and C intrinsics complete (encodings validated) ✅
-- **Benchmarking system**: Unified runner with 5 variants per pattern, working on RVV backend ✅
+- **Benchmarking system**: Complete with energy estimation, 20 configs tested, real results available ✅
+  - 5 patterns × 4 precisions (fp32/bf16/i8/i4) fully quantized ✅
+  - Energy metrics (7nm/5nm/3nm tech nodes) ✅
+  - Comprehensive Docker-based benchmark infrastructure ✅
 - Next: MLIR passes, RoCC spdot_bsr prototype, end-to-end sim

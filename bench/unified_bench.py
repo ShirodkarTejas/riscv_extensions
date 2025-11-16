@@ -32,6 +32,16 @@ except ImportError:
     print("Error: NumPy is required. Install with: pip install numpy")
     sys.exit(1)
 
+# Import new metrics modules
+try:
+    from bench.energy_estimator import EnergyEstimator
+    from bench.accuracy_metrics import AccuracyEvaluator
+except ImportError:
+    # If import fails, provide stub implementations
+    print("Warning: Energy/accuracy modules not found. Using basic metrics only.")
+    EnergyEstimator = None
+    AccuracyEvaluator = None
+
 
 class MetricsCollector:
     """Base class for collecting metrics from different backends"""
@@ -66,9 +76,16 @@ class MetricsCollector:
 class RVVMetricsCollector(MetricsCollector):
     """Metrics collector for RVV backend"""
     
-    def __init__(self):
+    def __init__(self, tech_node: str = "7nm", cache_model: str = "optimistic"):
         super().__init__("rvv")
         self.rvv_metrics = None
+        self.precision = "fp32"  # Will be set by caller
+        
+        # Initialize energy estimator if available
+        if EnergyEstimator is not None:
+            self.energy_estimator = EnergyEstimator(tech_node=tech_node, cache_model=cache_model)
+        else:
+            self.energy_estimator = None
         
     def parse_rvv_output(self, output: str) -> Dict:
         """Parse RVV runner output for metrics"""
@@ -106,6 +123,27 @@ class RVVMetricsCollector(MetricsCollector):
             base["accuracy"].update({
                 "checksum": checksum,
             })
+            
+            # Compute energy metrics if estimator is available
+            if self.energy_estimator is not None and rvv_cycles > 0:
+                energy = self.energy_estimator.estimate(
+                    cycles=int(rvv_cycles),
+                    mac_ops=int(mac_flops),
+                    bytes_read=int(rvv_bytes_read),
+                    bytes_written=int(bytes_written),
+                    precision=self.precision
+                )
+                base["energy"].update({
+                    "total_uj": energy.total_energy_uj,
+                    "compute_uj": energy.compute_energy_uj,
+                    "memory_read_uj": energy.memory_read_energy_uj,
+                    "memory_write_uj": energy.memory_write_energy_uj,
+                    "static_uj": energy.static_energy_uj,
+                    "average_power_mw": energy.average_power_mw,
+                    "efficiency_gops_per_w": energy.energy_efficiency_gops_per_w,
+                    "compute_percent": energy.compute_percent,
+                    "memory_percent": energy.memory_read_percent + energy.memory_write_percent,
+                })
         return base
 
 
@@ -186,7 +224,8 @@ def load_variant_config(pattern: str, variant: str) -> Dict:
 
 
 def run_rvv_benchmark(pattern: str, config: Dict, B: int, H: int, L: int, D: int, 
-                      warmup: int = 2, iterations: int = 5) -> Dict:
+                      warmup: int = 2, iterations: int = 5, tech_node: str = "7nm", 
+                      cache_model: str = "optimistic") -> Dict:
     """Run benchmark on RVV backend"""
     
     # Build command for RVV runner
@@ -250,7 +289,8 @@ def run_rvv_benchmark(pattern: str, config: Dict, B: int, H: int, L: int, D: int
     print(f"Command: {' '.join(qemu_cmd)}")
     
     # Run iterations
-    collector = RVVMetricsCollector()
+    collector = RVVMetricsCollector(tech_node=tech_node, cache_model=cache_model)
+    collector.precision = config.get("precision", "fp32")
     results = []
     
     print(f"Running {warmup} warmup iterations...")
@@ -297,11 +337,26 @@ def run_rvv_benchmark(pattern: str, config: Dict, B: int, H: int, L: int, D: int
         "compute": {
             "mac_ops": int(np.mean([r["compute"].get("mac_ops", 0) for r in results])),
         },
-        "energy": {},
         "accuracy": {
             "checksum": results[-1]["accuracy"].get("checksum", 0),
         },
     }
+    
+    # Aggregate energy metrics if available
+    if results and results[0]["energy"]:
+        aggregated["energy"] = {
+            "total_uj": np.mean([r["energy"].get("total_uj", 0) for r in results]),
+            "compute_uj": np.mean([r["energy"].get("compute_uj", 0) for r in results]),
+            "memory_read_uj": np.mean([r["energy"].get("memory_read_uj", 0) for r in results]),
+            "memory_write_uj": np.mean([r["energy"].get("memory_write_uj", 0) for r in results]),
+            "static_uj": np.mean([r["energy"].get("static_uj", 0) for r in results]),
+            "average_power_mw": np.mean([r["energy"].get("average_power_mw", 0) for r in results]),
+            "efficiency_gops_per_w": np.mean([r["energy"].get("efficiency_gops_per_w", 0) for r in results]),
+            "compute_percent": np.mean([r["energy"].get("compute_percent", 0) for r in results]),
+            "memory_percent": np.mean([r["energy"].get("memory_percent", 0) for r in results]),
+        }
+    else:
+        aggregated["energy"] = {}
     
     return aggregated
 
@@ -337,12 +392,42 @@ def generate_benchmark_report(benchmark_data: Dict) -> str:
 ## Memory
 - **Bytes Read**: {metrics['memory'].get('bytes_read', 0):,}
 - **Bytes Written**: {metrics['memory'].get('bytes_written', 0):,}
+- **Total Memory Traffic**: {(metrics['memory'].get('bytes_read', 0) + metrics['memory'].get('bytes_written', 0)) / 1024 / 1024:.2f} MB
 
 ## Compute
 - **MAC Operations**: {metrics['compute'].get('mac_ops', 0):,}
+"""
+    
+    # Add energy metrics if available
+    if metrics.get('energy') and metrics['energy']:
+        energy = metrics['energy']
+        md += f"""
+## Energy (Estimated, {benchmark_data.get('tech_node', '7nm')})
+- **Total Energy**: {energy.get('total_uj', 0):.2f} µJ
+- **Average Power**: {energy.get('average_power_mw', 0):.2f} mW
+- **Efficiency**: {energy.get('efficiency_gops_per_w', 0):.2f} GOPs/W
 
+### Energy Breakdown
+- **Compute**: {energy.get('compute_uj', 0):.2f} µJ ({energy.get('compute_percent', 0):.1f}%)
+- **Memory Read**: {energy.get('memory_read_uj', 0):.2f} µJ
+- **Memory Write**: {energy.get('memory_write_uj', 0):.2f} µJ
+- **Memory Total**: {energy.get('memory_read_uj', 0) + energy.get('memory_write_uj', 0):.2f} µJ ({energy.get('memory_percent', 0):.1f}%)
+- **Static (Leakage)**: {energy.get('static_uj', 0):.2f} µJ
+"""
+    
+    md += f"""
 ## Accuracy
 - **Checksum**: {metrics['accuracy'].get('checksum', 'N/A')}
+"""
+    
+    # Add accuracy metrics if available
+    if metrics['accuracy'].get('mae') is not None:
+        acc = metrics['accuracy']
+        md += f"""
+### Quality Metrics vs FP32 Baseline
+- **Mean Absolute Error (MAE)**: {acc.get('mae', 0):.6f}
+- **Relative MAE**: {acc.get('relative_mae', 0) * 100:.3f}%
+- **Cosine Similarity**: {acc.get('cosine_similarity', 0):.6f}
 """
     
     return md
@@ -367,6 +452,11 @@ def main():
     parser.add_argument('--iterations', type=int, default=5, help='Measurement iterations')
     parser.add_argument('--output', default='', help='Output JSON file path')
     parser.add_argument('--report', default='', help='Output markdown report path')
+    parser.add_argument('--tech-node', default='7nm', choices=['7nm', '5nm', '3nm'],
+                        help='Technology node for energy estimation (default: 7nm)')
+    parser.add_argument('--cache-model', default='optimistic', 
+                        choices=['optimistic', 'pessimistic', 'worst_case'],
+                        help='Cache behavior model for energy estimation (default: optimistic)')
     
     args = parser.parse_args()
     
@@ -393,7 +483,7 @@ def main():
         if args.backend == 'rvv':
             metrics = run_rvv_benchmark(
                 args.pattern, config, args.B, args.H, args.L, args.D,
-                args.warmup, args.iterations
+                args.warmup, args.iterations, args.tech_node, args.cache_model
             )
         else:
             print(f"Error: Backend '{args.backend}' not yet implemented")
@@ -412,6 +502,8 @@ def main():
         "pattern": args.pattern,
         "variant": args.variant,
         "backend": args.backend,
+        "tech_node": args.tech_node,
+        "cache_model": args.cache_model,
         "platform": {
             "arch": "riscv64",
             "backend_type": "qemu_rvv",
@@ -436,6 +528,12 @@ def main():
     print(f"Memory Read: {metrics['memory'].get('bytes_read', 0):,} bytes")
     print(f"Memory Written: {metrics['memory'].get('bytes_written', 0):,} bytes")
     print(f"MAC Operations: {metrics['compute'].get('mac_ops', 0):,}")
+    
+    if metrics.get('energy') and metrics['energy']:
+        energy = metrics['energy']
+        print(f"Energy: {energy.get('total_uj', 0):.2f} µJ @ {energy.get('average_power_mw', 0):.2f} mW")
+        print(f"Efficiency: {energy.get('efficiency_gops_per_w', 0):.2f} GOPs/W")
+    
     print("=" * 70)
     
     # Save JSON output
