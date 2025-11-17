@@ -12,7 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc-riscv64-linux-gnu g++-riscv64-linux-gnu \
     gcc-14-riscv64-linux-gnu g++-14-riscv64-linux-gnu \
     qemu-user \
+    # Chipyard dependencies (for Phase 3 hardware simulation)
+    default-jdk default-jre \
+    autoconf automake autotools-dev libmpc-dev libmpfr-dev libgmp-dev \
+    gawk bison flex texinfo gperf libtool patchutils bc \
+    device-tree-compiler libglib2.0-dev libpixman-1-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install SBT (Scala Build Tool) for Chipyard
+RUN echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | tee /etc/apt/sources.list.d/sbt.list && \
+    wget -qO- "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | gpg --dearmor > /etc/apt/trusted.gpg.d/sbt.gpg && \
+    apt-get update && apt-get install -y sbt && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 
@@ -41,6 +52,11 @@ RUN set -eux; \
 COPY requirements.txt /workspace/requirements.txt
 RUN python3 -m pip install --upgrade pip && \
     pip install -r requirements.txt
+
+# Set up environment for Chipyard
+ENV JAVA_HOME=/usr/lib/jvm/default-java
+ENV SBT_OPTS="-Xmx4G -XX:+UseG1GC"
+ENV RISCV=/opt/riscv
 
 # Default command: interactive shell (compose overrides to sleep for dev)
 CMD ["bash"]

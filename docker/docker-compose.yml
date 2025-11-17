@@ -8,11 +8,25 @@ services:
       dockerfile: docker/Dockerfile
     volumes:
       - ..:/workspace
+      # Optional: Persistent Chipyard directory for faster rebuilds
+      # Uncomment if you plan to use Chipyard hardware simulation
+      # - chipyard_data:/workspace/chipyard
     working_dir: /workspace
     command: sleep infinity
     tty: true
     restart: unless-stopped
+    # Allocate more resources for Chipyard builds (optional)
+    shm_size: '2gb'
+    environment:
+      - RISCV=/opt/riscv
+      - JAVA_HOME=/usr/lib/jvm/default-java
+      - SBT_OPTS=-Xmx4G -XX:+UseG1GC
     # Uncomment to enable GPU (requires NVIDIA Container Toolkit)
     # gpus: all
+
+# Uncomment if you want persistent Chipyard storage
+# volumes:
+#   chipyard_data:
+#     driver: local
 
 
