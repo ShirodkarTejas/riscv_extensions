@@ -1,0 +1,133 @@
+\documentclass[10pt,conference]{IEEEtran}
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{hyperref}
+
+% Reduce spacing slightly to fit 4 pages comfortably
+\usepackage{setspace}
+\setlength{\textfloatsep}{6pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{4pt}
+
+\begin{document}
+
+\title{Sparse Attention Operator Extensions for RISC-V}
+
+\author{
+\IEEEauthorblockN{Aisha Harris \and Anirudh Vempati \and Tejas Shirodkar}
+\IEEEauthorblockA{
+Hardware For AI \\
+International Institute of Information Technology, Hyderabad \\
+Email(s): aisha.harris@students.iiit.ac.in, anirudh.vempati@students.iiit.ac.in, tejas.shirodkar@research.iiit.ac.in
+}
+}
+
+\maketitle
+
+\begin{abstract}
+Self-attention is the core operation in modern Transformer models, but its quadratic cost in sequence length is often prohibitive for edge devices. Sparse attention mechanisms reduce this cost, yet current RISC-V platforms lack dedicated operator support for these modern variants. This project implements a set of sparse attention operators with multiple sparsity patterns and quantization formats on a standard RISC-V platform.
+We implement a unified sparse attention operator library with backends for CPU, GPU, and RISC-V Vector (RVV), and define a custom sparse-attention instruction set and RTL path for future accelerators. The software layer exposes sliding-window, block local-global, $N\!:\!M$ structured, landmark, and LSH-based attention patterns, each running in fp32, bf16, int8, or int4, and executes unmodified on stock QEMU using only standard RVV instructions.
+Our evaluation compares cycles, memory traffic, and technology-scaled energy across patterns and precisions using a physics-based energy model. Sliding-window int4 provides the lowest energy for ultra-low power deployment, while landmark fp32/bf16 offer the best accuracy and latency at higher cost. Memory access dominates overall energy, motivating cache-aware tiling and layout strategies. The work demonstrates that sparse attention can be efficiently mapped onto RISC-V using operator, compiler, and software co-design, and provides configuration guidelines for power, performance, and accuracy targets.
+\end{abstract}
+
+\section{Introduction / Problem Description}
+Attention is a critical operation in large language models, but its quadratic complexity makes dense attention expensive for long sequences, especially on low-power hardware. Sparse attention reduces compute and memory by restricting each query token to attend to a structured subset of keys and values. While several sparse patterns have been developed for efficient Transformers, there is currently no unified operator support for these variants in the RISC-V ecosystem.
+Existing RISC-V vector extensions provide dot products and matrix multiplication, but lack primitives for sparse mask selection, metadata-driven attention, or quantization-aware execution. Implementations that rely solely on software-level sparsity incur high indexing and cache overheads, limiting throughput and increasing energy consumption.
+This project addresses these limitations by designing sparse attention operators and a supporting software stack that together enable five sparsity patterns and four numeric precisions. Our aim is to provide energy-efficient attention on RISC-V with tunable accuracy–performance trade-offs, covering ultra-low-power to high-performance scenarios. The work contributes operator extensions, a compiler flow, and an evaluation across cycles, energy, and memory, demonstrating the feasibility of sparse attention on unmodified RISC-V.
+
+\section{Method / Approach}
+
+\subsection{Design Overview}
+We implement a unified sparse attention operator library that targets standard RISC-V Vector (RVV) as the primary execution backend, while also defining a path to a custom sparse-attention accelerator via new RISC-V instructions. The design exposes five sparsity patterns---sliding window, block local-global, $N\!:\!M$ structured, landmark, and LSH-based---each available in four numeric formats (fp32, bf16, int8, int4). A single Python/C API selects among backends (CPU, GPU, RVV, custom ISA) and patterns, so the same high-level kernel can be evaluated across platforms.
+
+On RISC-V, we focus on a \emph{portable} RVV implementation that uses only standard vector instructions (e.g., \texttt{vle}, \texttt{vse}, \texttt{vfmacc}) and runs unmodified on upstream QEMU with \texttt{-cpu rv64,v=true}. In parallel, we specify seven custom sparse-attention primitives (e.g., block reduction, sparse dot-product in block-sparse row (BSR) format, fused softmax, sparse matmul) under a dedicated custom opcode and CSR space, and provide matching RTL modules and C intrinsics. This separation lets us measure realistic performance and energy on RVV today, while keeping a clear migration path to a future hardware accelerator that reuses the same operator interface.
+
+\subsection{Workflow}
+The end-to-end workflow is structured to support both rapid software iteration and hardware co-design:
+\begin{enumerate}
+    \item \textbf{Operator specification}: Define sparse attention patterns (sliding window, block local-global, $N\!:\!M$, LSH, landmark) together with shape contracts and quantization knobs in a common specification.
+    \item \textbf{Reference implementation}: Implement each pattern in a CPU/GPU reference backend for correctness and accuracy validation.
+    \item \textbf{RVV kernel generation}: Use an MLIR-based compiler pipeline (SATTN dialect and lowering passes) to automatically generate C/RVV kernels that implement the specified operators using standard vector intrinsics.
+    \item \textbf{RISC-V execution}: Build and run the generated RVV kernels under QEMU using a dedicated runner that records cycles, memory traffic, and correctness checks against the reference.
+    \item \textbf{Energy/accuracy evaluation}: Post-process raw metrics with an energy estimator (multi-tech-node model) and an accuracy evaluator, then feed aggregated results into a variant-selector tool that recommends pattern/precision configurations under user constraints (memory, energy, latency).
+\end{enumerate}
+
+\subsection{Software Stack}
+The software stack is organized as follows:
+\begin{itemize}
+    \item \textbf{Frontends}: Python and PyTorch bindings that expose a sparse attention API compatible with standard Transformer layers.
+    \item \textbf{Core operators}: A unified operator library implementing all five patterns and four precisions on CPU/GPU (for reference) and on RVV (for RISC-V evaluation).
+    \item \textbf{Compiler layer}: An MLIR ``SATTN'' dialect plus lowering passes and a C code generator that turn high-level operator specs into optimized RVV kernels.
+    \item \textbf{RISC-V backends}: A portable RVV backend that runs on stock QEMU, and a custom-ISA path with specified instruction encodings, CSRs, and RTL (tested via simulation but not required for this work's measurements).
+    \item \textbf{Benchmarking and analysis}: A unified benchmarking harness that runs all 5 patterns $\times$ 4 precisions, an energy-estimation module that converts cycles and memory traffic into technology-scaled energy, and an accuracy+variant-selection toolkit that summarizes trade-offs across power, performance, and quality.
+\end{itemize}
+
+\subsection{Optimizations}
+We applied several concrete optimizations to the RVV backend and benchmarking pipeline:
+\begin{itemize}
+    \item \textbf{Pre-quantization (Phase 1)}: Move fp32$\rightarrow$i8/i4 quantization outside the hot attention loops, so queries and keys are quantized once into packed buffers reused across all windows.
+    \item \textbf{RVV integer dot-products (Phase 2)}: Replace scalar int8 dot-products with vectorized implementations using RVV intrinsics, yielding a measured 6.4\% speedup on QEMU for i8/i4 kernels and setting up larger gains on real hardware.
+    \item \textbf{Layout and tiling}: Use layouts and loop tiling that improve locality for sliding-window and block local-global patterns, reducing bytes moved from memory and enabling effective cache reuse.
+    \item \textbf{Energy-aware profiling}: Instrument the benchmark harness with a physics-based energy model that breaks down compute vs memory energy, and use these metrics---along with accuracy scores---to recommend pattern/precision pairs such as sliding-window i4 for ultra-low-power and landmark fp32/bf16 for highest accuracy or latency.
+\end{itemize}
+
+\section{Experimental Results}
+
+\subsection{Setup}
+Experiments were run on a standard RISC-V RVV backend using QEMU. For each sparsity pattern and precision we measured:
+\begin{itemize}
+    \item execution cycles,
+    \item peak memory usage,
+    \item estimated energy consumption using a calibrated energy model (multi-technology-node, compute and memory breakdown).
+\end{itemize}
+
+\subsection{Quantitative Results}
+Lower precision formats consistently reduced both energy and memory footprint. Sliding-window int4 achieved the lowest energy, while landmark fp32 incurred the highest cost but highest accuracy. A Pareto frontier emerged between energy and cycles.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcccc}
+\hline
+Use Case & Pattern & Precision & Energy ($\mu$J) & Memory (MB) \\
+\hline
+Ultra Low Power & sliding & int4 & 32.18 & 0.42 \\
+Low Power & sliding & int8 & 38.79 & 0.58 \\
+Balanced & sliding & bf16 & 97.78 & 1.69 \\
+High Perf. & landmark & fp32 & 131.70 & 2.50 \\
+\hline
+\end{tabular}
+\caption{Recommended configurations.}
+\label{tab:configs}
+\end{table}
+
+\subsection{Observations}
+\begin{itemize}
+    \item Memory access dominates energy; tiling is critical.
+    \item Sliding window is optimal for power-constrained settings.
+    \item Landmark attention is preferable when accuracy dominates.
+\end{itemize}
+
+\section{Related Work}
+Sparse attention has been explored in efficient Transformer architectures such as Longformer, BigBird, and Reformer, which introduce windowed, landmark-based, and LSH-based sparsity. Structured sparsity such as $N\!:\!M$ has been used for hardware-friendly pruning.
+Hardware acceleration work has focused on dense matrix compute, quantization, and systolic arrays, with emerging RISC-V vector support. However, prior systems lack unified operator support for modern sparse attention patterns and quantized execution on RISC-V. Our work differs by providing a vertically integrated solution: custom operators, compiler backend, and C API, validated on standard RISC-V without hardware modifications.
+
+\section{Near-Term Future Work}
+Future directions include:
+\begin{itemize}
+    \item Co-designing training pipelines targeting int8 and int4 formats.
+    \item Extending operators to additional structured sparsity patterns.
+    \item Integrating end-to-end LLM inference benchmarks.
+    \item Testing on real hardware beyond QEMU.
+\end{itemize}
+
+\section{Conclusion}
+We implemented sparse attention operators for RISC-V that support five sparsity patterns and four numeric precisions. Our software stack includes a unified Python/C API, an MLIR-based compiler pipeline that generates RVV kernels, and tiling and layout optimizations tailored to RISC-V. Experiments across cycles, memory, and model-based energy show that sliding-window int4 is optimal for ultra-low-power deployment, while landmark fp32/bf16 perform best when accuracy or latency is prioritized. Memory access is the primary energy bottleneck, making tiling, layout, and quantization essential. The work demonstrates that modern sparse attention mechanisms can be deployed efficiently on RISC-V without hardware patches, while leaving a clear path to custom sparse-attention instructions and accelerators, and enabling flexible trade-offs across power, performance, and accuracy.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
